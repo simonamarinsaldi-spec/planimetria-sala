@@ -510,6 +510,8 @@
     </div>
 
     <button class="secondary" onclick="exportPDF()">🖨 Stampa / Salva come PDF</button>
+    <button class="secondary" onclick="exportPDFWithNames()">🖨 Stampa con nomi (per A3/plotter)</button>
+    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">La prima stampa è quella di sempre (solo numeri sulle sedie). La seconda aggiunge il nome accanto a ogni sedia assegnata e l'elenco nomi sui tavoli a posti liberi: usala per una copia grande da stampare in A3 o al plotter.</div>
     <button class="secondary" onclick="exportLayout()">⬇ Esporta layout (JSON)</button>
     <button class="secondary" onclick="document.getElementById('importFile').click()">⬆ Importa layout (JSON)</button>
     <input type="file" id="importFile" accept="application/json" style="display:none" onchange="importLayout(event)">
@@ -619,6 +621,11 @@ drawStatic();
 // ---------- Tables state ----------
 let tables = []; // {id, type:'round'|'rect', x, y (meters, center), rotation(deg), seats, lenM, widM, diaM}
 let selectedId = null;
+// When true, the floor-plan drawing also prints each guest's name next to
+// their chair (and the list of names for tables with free/unassigned
+// seating). Off by default — the normal on-screen view and the "no names"
+// PDF never show names on the drawing itself, only the numbers.
+let printNames = false;
 let mergeSelection = new Set(); // table ids picked (via checkbox in the table list) to be merged together
 // Which specific chair (index into seatsData, within the selected table) is
 // currently picked — set by clicking a chair on the drawing or its row in
@@ -957,7 +964,14 @@ function seatTooltip(seat, idx){
   if(seat.child) parts.push('Seggiolino');
   return parts.join(' — ');
 }
-function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSeat, noteDir){
+// Shortens a guest name for the floor-plan drawing so it never overlaps
+// neighbouring seats: keeps the first name only (first word) and, if that
+// alone is still long, hard-truncates it with an ellipsis.
+function shortNameForPlan(name){
+  const first = (name||'').trim().split(/\s+/)[0] || '';
+  return first.length > 11 ? first.slice(0,10)+'…' : first;
+}
+function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSeat, noteDir, tableRotation){
   const vis = seatVisual(seat);
   if(isSelectedSeat){
     const ring = document.createElementNS(NS,'circle');
@@ -989,6 +1003,25 @@ function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSea
   numTxt.setAttribute('pointer-events', 'none');
   numTxt.textContent = (seat && seat.number) || (idx+1);
   g.appendChild(numTxt);
+  if(printNames && seat && seat.name && seat.name.trim()){
+    // Name sits just outside the chair dot, along the direction the chair
+    // already points away from the table centre, so it never overlaps the
+    // table shape. Counter-rotate against the table's own rotation so the
+    // text always reads upright on the printed page.
+    const len = Math.hypot(cx, cy) || 1;
+    const ux = cx/len, uy = cy/len;
+    const nx = cx + ux*9, ny = cy + uy*9;
+    const nameTxt = document.createElementNS(NS,'text');
+    nameTxt.setAttribute('x', nx); nameTxt.setAttribute('y', ny+2.2);
+    nameTxt.setAttribute('text-anchor','middle');
+    nameTxt.setAttribute('font-size', 6);
+    nameTxt.setAttribute('font-weight', '600');
+    nameTxt.setAttribute('fill', vis.stroke || defaultStroke);
+    nameTxt.setAttribute('pointer-events', 'none');
+    if(tableRotation) nameTxt.setAttribute('transform', `rotate(${-tableRotation} ${nx} ${ny})`);
+    nameTxt.textContent = shortNameForPlan(seat.name);
+    g.appendChild(nameTxt);
+  }
   if(seat && seat.child){
     const badge = document.createElementNS(NS,'circle');
     badge.setAttribute('cx', cx+3.5); badge.setAttribute('cy', cy-3.5); badge.setAttribute('r', 2.4);
@@ -1122,6 +1155,43 @@ function appendNotesSummary(g, t, startY){
   return y;
 }
 
+// For tables with free/unassigned seating (posti liberi), the chairs on
+// the drawing don't correspond to specific guests, so there's nowhere to
+// put a name next to a chair. Instead, when printing with names, list every
+// assigned guest for that table as small wrapped lines under the table's
+// tags — same idea as the free-text notes already shown there.
+function appendFreeTableNamesForPrint(g, t, startY){
+  if(!printNames) return startY;
+  const names = (t.seatsData||[]).map(s=>s.name && s.name.trim()).filter(Boolean);
+  if(!names.length) return startY;
+  const maxCharsPerLine = 26;
+  const lines = [];
+  let current = '';
+  names.forEach(name=>{
+    const candidate = current ? current + ', ' + name : name;
+    if(candidate.length > maxCharsPerLine && current){
+      lines.push(current);
+      current = name;
+    } else {
+      current = candidate;
+    }
+  });
+  if(current) lines.push(current);
+  let y = startY;
+  lines.forEach(line=>{
+    const txt = document.createElementNS(NS,'text');
+    txt.setAttribute('text-anchor','middle');
+    txt.setAttribute('y', y);
+    txt.setAttribute('font-size', 7.5);
+    txt.setAttribute('font-weight', '600');
+    txt.setAttribute('fill', '#3b6fb0');
+    txt.textContent = line;
+    g.appendChild(txt);
+    y += 9.5;
+  });
+  return y;
+}
+
 function render(){
   redrawCanvas();
   updateSidebar();
@@ -1175,10 +1245,11 @@ function redrawCanvas(){
           const ang = (i/n) * Math.PI*2 - Math.PI/2;
           const cxp = Math.cos(ang) * (r+7);
           const cyp = Math.sin(ang) * (r+7);
-          drawSeatDot(g, cxp, cyp, t.seatsData[i], i, '#2f6f6a', t.id, t.id===selectedId && i===selectedSeatIdx);
+          drawSeatDot(g, cxp, cyp, t.seatsData[i], i, '#2f6f6a', t.id, t.id===selectedId && i===selectedSeatIdx, null, t.rotation);
         }
       } else {
-        appendNotesSummary(g, t, nextY);
+        const afterNotes = appendNotesSummary(g, t, nextY);
+        appendFreeTableNamesForPrint(g, t, afterNotes);
       }
     } else {
       // Length runs vertically (top↔bottom) so the two "capotavola" (head)
@@ -1223,10 +1294,10 @@ function redrawCanvas(){
         let bottomIdx = -1;
         for(let i=t.seatsData.length-1;i>=0;i--){ if(t.seatsData[i].side==='bottom'){ bottomIdx=i; break; } }
         if(topIdx>=0){
-          drawSeatDot(g, 0, -(h/2+7), t.seatsData[topIdx], topIdx, '#a6631f', t.id, isSelSeat(topIdx), {dx:0,dy:-1}); // capotavola in alto
+          drawSeatDot(g, 0, -(h/2+7), t.seatsData[topIdx], topIdx, '#a6631f', t.id, isSelSeat(topIdx), {dx:0,dy:-1}, t.rotation); // capotavola in alto
         }
         if(bottomIdx>=0){
-          drawSeatDot(g, 0, h/2+7, t.seatsData[bottomIdx], bottomIdx, '#a6631f', t.id, isSelSeat(bottomIdx), {dx:0,dy:1}); // capotavola in basso
+          drawSeatDot(g, 0, h/2+7, t.seatsData[bottomIdx], bottomIdx, '#a6631f', t.id, isSelSeat(bottomIdx), {dx:0,dy:1}, t.rotation); // capotavola in basso
         }
         const leftIdxs = [], rightIdxs = [];
         t.seatsData.forEach((s,i)=>{
@@ -1236,11 +1307,12 @@ function redrawCanvas(){
         [ [-1, leftIdxs], [1, rightIdxs] ].forEach(([side, idxs])=>{
           idxs.forEach((seatIdx, pos)=>{
             const off = -h/2 + pitch*(pos+0.5);
-            drawSeatDot(g, side*(w/2+7), off, t.seatsData[seatIdx], seatIdx, '#a6631f', t.id, isSelSeat(seatIdx), {dx:side,dy:0});
+            drawSeatDot(g, side*(w/2+7), off, t.seatsData[seatIdx], seatIdx, '#a6631f', t.id, isSelSeat(seatIdx), {dx:side,dy:0}, t.rotation);
           });
         });
       } else {
-        appendNotesSummary(g, t, nextY2);
+        const afterNotes2 = appendNotesSummary(g, t, nextY2);
+        appendFreeTableNamesForPrint(g, t, afterNotes2);
       }
       if(isSel){
         addResizeHandle(g, t.id, 0, -h/2, 'len', 'neg', 'ns-resize');
@@ -1925,7 +1997,8 @@ function buildPrintGuestList(){
   container.innerHTML = `<h2>Elenco tavoli e ospiti</h2>${summary}${blocks}`;
 }
 
-function exportPDF(){
+function runExportPDF(withNames){
+  printNames = withNames;
   document.getElementById('printDate').textContent = 'Generato il ' + new Date().toLocaleString('it-IT');
   const totalSeats = tables.reduce((s,t)=>s+t.seats,0);
   document.getElementById('printTotals').textContent = `${tables.length} tavoli · ${totalSeats} persone totali`;
@@ -1933,8 +2006,16 @@ function exportPDF(){
   selectedId = null;
   render();
   // give the browser a moment to lay out the print-only content before printing
-  setTimeout(()=>window.print(), 50);
+  setTimeout(()=>{
+    window.print();
+    // reset back to the normal (numbers-only) view once the print dialog
+    // has been handed off, so the on-screen drawing never shows names.
+    printNames = false;
+    render();
+  }, 50);
 }
+function exportPDF(){ runExportPDF(false); }
+function exportPDFWithNames(){ runExportPDF(true); }
 
 function resetAll(){
   if(tables.length && !confirm('Vuoi svuotare tutta la sala? Potrai annullare con "Annulla ultima modifica" subito dopo, se cambi idea.')) return;
