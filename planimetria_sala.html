@@ -964,14 +964,7 @@ function seatTooltip(seat, idx){
   if(seat.child) parts.push('Seggiolino');
   return parts.join(' — ');
 }
-// Shortens a guest name for the floor-plan drawing so it never overlaps
-// neighbouring seats: keeps the first name only (first word) and, if that
-// alone is still long, hard-truncates it with an ellipsis.
-function shortNameForPlan(name){
-  const first = (name||'').trim().split(/\s+/)[0] || '';
-  return first.length > 11 ? first.slice(0,10)+'…' : first;
-}
-function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSeat, noteDir, tableRotation){
+function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSeat, noteDir, tableRotation, radial){
   const vis = seatVisual(seat);
   if(isSelectedSeat){
     const ring = document.createElementNS(NS,'circle');
@@ -1003,25 +996,6 @@ function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSea
   numTxt.setAttribute('pointer-events', 'none');
   numTxt.textContent = (seat && seat.number) || (idx+1);
   g.appendChild(numTxt);
-  if(printNames && seat && seat.name && seat.name.trim()){
-    // Name sits just outside the chair dot, along the direction the chair
-    // already points away from the table centre, so it never overlaps the
-    // table shape. Counter-rotate against the table's own rotation so the
-    // text always reads upright on the printed page.
-    const len = Math.hypot(cx, cy) || 1;
-    const ux = cx/len, uy = cy/len;
-    const nx = cx + ux*9, ny = cy + uy*9;
-    const nameTxt = document.createElementNS(NS,'text');
-    nameTxt.setAttribute('x', nx); nameTxt.setAttribute('y', ny+2.2);
-    nameTxt.setAttribute('text-anchor','middle');
-    nameTxt.setAttribute('font-size', 6);
-    nameTxt.setAttribute('font-weight', '600');
-    nameTxt.setAttribute('fill', vis.stroke || defaultStroke);
-    nameTxt.setAttribute('pointer-events', 'none');
-    if(tableRotation) nameTxt.setAttribute('transform', `rotate(${-tableRotation} ${nx} ${ny})`);
-    nameTxt.textContent = shortNameForPlan(seat.name);
-    g.appendChild(nameTxt);
-  }
   if(seat && seat.child){
     const badge = document.createElementNS(NS,'circle');
     badge.setAttribute('cx', cx+3.5); badge.setAttribute('cy', cy-3.5); badge.setAttribute('r', 2.4);
@@ -1155,23 +1129,29 @@ function appendNotesSummary(g, t, startY){
   return y;
 }
 
-// For tables with free/unassigned seating (posti liberi), the chairs on
-// the drawing don't correspond to specific guests, so there's nowhere to
-// put a name next to a chair. Instead, when printing with names, list every
-// assigned guest for that table as small wrapped lines under the table's
-// tags — same idea as the free-text notes already shown there.
-function appendFreeTableNamesForPrint(g, t, startY){
+// When printing with names, the full guest list for a table is written
+// INSIDE the table shape (there's empty space there once the T#/seat-count
+// label has moved outside), instead of next to individual chairs — this is
+// what keeps round tables with several close-together chairs legible.
+// - Tables with individually assigned seats: "1. Nome" per seat, sorted by
+//   seat number, so the list doubles as a legend for the numbered chairs.
+// - Tables with free/unassigned seating: just the plain list of names.
+// maxCharsPerLine lets rect (wider) and round (narrower) tables wrap
+// differently.
+function appendGuestListInsideTable(g, t, startY, maxCharsPerLine){
   if(!printNames) return startY;
-  const names = (t.seatsData||[]).map(s=>s.name && s.name.trim()).filter(Boolean);
-  if(!names.length) return startY;
-  const maxCharsPerLine = 26;
+  const seatsSorted = [...(t.seatsData||[])].sort((a,b)=>(a.number||0)-(b.number||0));
+  const entries = t.seatsAssigned
+    ? seatsSorted.filter(s=>s.name && s.name.trim()).map(s=>`${s.number}. ${s.name.trim()}`)
+    : seatsSorted.map(s=>s.name && s.name.trim()).filter(Boolean);
+  if(!entries.length) return startY;
   const lines = [];
   let current = '';
-  names.forEach(name=>{
-    const candidate = current ? current + ', ' + name : name;
+  entries.forEach(entry=>{
+    const candidate = current ? current + '   ' + entry : entry;
     if(candidate.length > maxCharsPerLine && current){
       lines.push(current);
-      current = name;
+      current = entry;
     } else {
       current = candidate;
     }
@@ -1184,12 +1164,26 @@ function appendFreeTableNamesForPrint(g, t, startY){
     txt.setAttribute('y', y);
     txt.setAttribute('font-size', 7.5);
     txt.setAttribute('font-weight', '600');
-    txt.setAttribute('fill', '#3b6fb0');
+    txt.setAttribute('fill', '#1a1a1a');
     txt.textContent = line;
     g.appendChild(txt);
-    y += 9.5;
+    y += 10;
   });
   return y;
+}
+
+// Draws the "T# · Np" label above/outside the table shape — used only in
+// print-with-names mode, once the space inside the table is needed for the
+// guest list instead.
+function drawTableHeaderOutside(g, text, y, color){
+  const txt = document.createElementNS(NS,'text');
+  txt.setAttribute('text-anchor','middle');
+  txt.setAttribute('x', 0); txt.setAttribute('y', y);
+  txt.setAttribute('font-size', 11);
+  txt.setAttribute('font-weight', '700');
+  txt.setAttribute('fill', color);
+  txt.textContent = text;
+  g.appendChild(txt);
 }
 
 function render(){
@@ -1219,23 +1213,28 @@ function redrawCanvas(){
       c.setAttribute('stroke', isSel ? '#0d3b37' : 'var(--round, #2f6f6a)');
       c.setAttribute('stroke-width', isSel ? 3 : 2);
       g.appendChild(c);
-      const label = document.createElementNS(NS,'text');
-      label.setAttribute('text-anchor','middle');
-      label.setAttribute('y', 4);
-      label.setAttribute('font-size', 12);
-      label.setAttribute('font-weight', '700');
-      label.setAttribute('fill', '#2f6f6a');
-      label.setAttribute('y', 16);
-      label.textContent = `T${tableNumber}`;
-      g.appendChild(label);
-      const countLabel = document.createElementNS(NS,'text');
-      countLabel.setAttribute('text-anchor','middle');
-      countLabel.setAttribute('y', -4);
-      countLabel.setAttribute('font-size', 13);
-      countLabel.setAttribute('font-weight', '700');
-      countLabel.setAttribute('fill', '#2f6f6a');
-      countLabel.textContent = `${t.seats}p`;
-      g.appendChild(countLabel);
+      if(printNames){
+        // Space inside the circle is needed for the guest list, so the
+        // "T# · Np" label moves just above the table instead.
+        drawTableHeaderOutside(g, `T${tableNumber} · ${t.seats}p`, -(r+14), '#2f6f6a');
+      } else {
+        const label = document.createElementNS(NS,'text');
+        label.setAttribute('text-anchor','middle');
+        label.setAttribute('font-size', 12);
+        label.setAttribute('font-weight', '700');
+        label.setAttribute('fill', '#2f6f6a');
+        label.setAttribute('y', 16);
+        label.textContent = `T${tableNumber}`;
+        g.appendChild(label);
+        const countLabel = document.createElementNS(NS,'text');
+        countLabel.setAttribute('text-anchor','middle');
+        countLabel.setAttribute('y', -4);
+        countLabel.setAttribute('font-size', 13);
+        countLabel.setAttribute('font-weight', '700');
+        countLabel.setAttribute('fill', '#2f6f6a');
+        countLabel.textContent = `${t.seats}p`;
+        g.appendChild(countLabel);
+      }
       let nextY = appendTableTags(g, t, t.seatsAssigned ? r+18 : 28);
       if(t.seatsAssigned){
         // chair dots, color-coded by guest info — seat 1 at the top (12
@@ -1245,11 +1244,12 @@ function redrawCanvas(){
           const ang = (i/n) * Math.PI*2 - Math.PI/2;
           const cxp = Math.cos(ang) * (r+7);
           const cyp = Math.sin(ang) * (r+7);
-          drawSeatDot(g, cxp, cyp, t.seatsData[i], i, '#2f6f6a', t.id, t.id===selectedId && i===selectedSeatIdx, null, t.rotation);
+          drawSeatDot(g, cxp, cyp, t.seatsData[i], i, '#2f6f6a', t.id, t.id===selectedId && i===selectedSeatIdx, null, t.rotation, true);
         }
+        if(printNames) appendGuestListInsideTable(g, t, -6, 22);
       } else {
         const afterNotes = appendNotesSummary(g, t, nextY);
-        appendFreeTableNamesForPrint(g, t, afterNotes);
+        appendGuestListInsideTable(g, t, afterNotes, 22);
       }
     } else {
       // Length runs vertically (top↔bottom) so the two "capotavola" (head)
@@ -1263,23 +1263,26 @@ function redrawCanvas(){
       rect.setAttribute('stroke', isSel ? '#5c3a10' : 'var(--rect, #a6631f)');
       rect.setAttribute('stroke-width', isSel ? 3 : 2);
       g.appendChild(rect);
-      const label = document.createElementNS(NS,'text');
-      label.setAttribute('text-anchor','middle');
-      label.setAttribute('y', 4);
-      label.setAttribute('font-size', 12);
-      label.setAttribute('font-weight', '700');
-      label.setAttribute('fill', '#a6631f');
-      label.setAttribute('y', 16);
-      label.textContent = `T${tableNumber}`;
-      g.appendChild(label);
-      const countLabel = document.createElementNS(NS,'text');
-      countLabel.setAttribute('text-anchor','middle');
-      countLabel.setAttribute('y', -4);
-      countLabel.setAttribute('font-size', 13);
-      countLabel.setAttribute('font-weight', '700');
-      countLabel.setAttribute('fill', '#a6631f');
-      countLabel.textContent = `${t.seats}p`;
-      g.appendChild(countLabel);
+      if(printNames){
+        drawTableHeaderOutside(g, `T${tableNumber} · ${t.seats}p`, -(h/2+14), '#a6631f');
+      } else {
+        const label = document.createElementNS(NS,'text');
+        label.setAttribute('text-anchor','middle');
+        label.setAttribute('font-size', 12);
+        label.setAttribute('font-weight', '700');
+        label.setAttribute('fill', '#a6631f');
+        label.setAttribute('y', 16);
+        label.textContent = `T${tableNumber}`;
+        g.appendChild(label);
+        const countLabel = document.createElementNS(NS,'text');
+        countLabel.setAttribute('text-anchor','middle');
+        countLabel.setAttribute('y', -4);
+        countLabel.setAttribute('font-size', 13);
+        countLabel.setAttribute('font-weight', '700');
+        countLabel.setAttribute('fill', '#a6631f');
+        countLabel.textContent = `${t.seats}p`;
+        g.appendChild(countLabel);
+      }
       let nextY2 = appendTableTags(g, t, t.seatsAssigned ? h/2+18 : 28);
       if(t.seatsAssigned){
         // Each seat's physical slot comes from its own fixed "side" (assigned
@@ -1310,9 +1313,10 @@ function redrawCanvas(){
             drawSeatDot(g, side*(w/2+7), off, t.seatsData[seatIdx], seatIdx, '#a6631f', t.id, isSelSeat(seatIdx), {dx:side,dy:0}, t.rotation);
           });
         });
+        if(printNames) appendGuestListInsideTable(g, t, -6, 30);
       } else {
         const afterNotes2 = appendNotesSummary(g, t, nextY2);
-        appendFreeTableNamesForPrint(g, t, afterNotes2);
+        appendGuestListInsideTable(g, t, afterNotes2, 30);
       }
       if(isSel){
         addResizeHandle(g, t.id, 0, -h/2, 'len', 'neg', 'ns-resize');
