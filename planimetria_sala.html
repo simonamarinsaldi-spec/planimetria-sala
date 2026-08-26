@@ -964,7 +964,13 @@ function seatTooltip(seat, idx){
   if(seat.child) parts.push('Seggiolino');
   return parts.join(' — ');
 }
-function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSeat, noteDir, tableRotation, radial){
+// Shortens a guest name so it fits next to a chair on the drawing: first
+// name only, hard-truncated with an ellipsis if that's still too long.
+function shortNameForPlan(name){
+  const first = (name||'').trim().split(/\s+/)[0] || '';
+  return first.length > 11 ? first.slice(0,10)+'…' : first;
+}
+function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSeat, noteDir, tableRotation, showName){
   const vis = seatVisual(seat);
   if(isSelectedSeat){
     const ring = document.createElementNS(NS,'circle');
@@ -996,6 +1002,23 @@ function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSea
   numTxt.setAttribute('pointer-events', 'none');
   numTxt.textContent = (seat && seat.number) || (idx+1);
   g.appendChild(numTxt);
+  if(printNames && showName && seat && seat.name && seat.name.trim()){
+    // Rectangular tables only: chairs are spaced apart enough along their
+    // fixed pitch that a name just outside the chair has room to breathe.
+    const len = Math.hypot(cx, cy) || 1;
+    const ux = cx/len, uy = cy/len;
+    const nx = cx + ux*9, ny = cy + uy*9;
+    const nameTxt = document.createElementNS(NS,'text');
+    nameTxt.setAttribute('x', nx); nameTxt.setAttribute('y', ny+2.2);
+    nameTxt.setAttribute('text-anchor','middle');
+    nameTxt.setAttribute('font-size', 6);
+    nameTxt.setAttribute('font-weight', '600');
+    nameTxt.setAttribute('fill', vis.stroke || defaultStroke);
+    nameTxt.setAttribute('pointer-events', 'none');
+    if(tableRotation) nameTxt.setAttribute('transform', `rotate(${-tableRotation} ${nx} ${ny})`);
+    nameTxt.textContent = shortNameForPlan(seat.name);
+    g.appendChild(nameTxt);
+  }
   if(seat && seat.child){
     const badge = document.createElementNS(NS,'circle');
     badge.setAttribute('cx', cx+3.5); badge.setAttribute('cy', cy-3.5); badge.setAttribute('r', 2.4);
@@ -1129,15 +1152,13 @@ function appendNotesSummary(g, t, startY){
   return y;
 }
 
-// When printing with names, the full guest list for a table is written
-// INSIDE the table shape (there's empty space there once the T#/seat-count
-// label has moved outside), instead of next to individual chairs — this is
-// what keeps round tables with several close-together chairs legible.
-// - Tables with individually assigned seats: "1. Nome" per seat, sorted by
-//   seat number, so the list doubles as a legend for the numbered chairs.
-// - Tables with free/unassigned seating: just the plain list of names.
-// maxCharsPerLine lets rect (wider) and round (narrower) tables wrap
-// differently.
+// When printing with names, round tables write the full guest list INSIDE
+// the circle (there's empty space there once the T#/seat-count label has
+// moved outside) — this is what keeps round tables with several
+// close-together chairs legible, instead of a name next to every chair.
+// - Assigned seating: "1. Nome" per seat, sorted by seat number, so the
+//   list doubles as a legend for the numbered chairs.
+// - Free/unassigned seating: just the plain list of names.
 function appendGuestListInsideTable(g, t, startY, maxCharsPerLine){
   if(!printNames) return startY;
   const seatsSorted = [...(t.seatsData||[])].sort((a,b)=>(a.number||0)-(b.number||0));
@@ -1172,9 +1193,43 @@ function appendGuestListInsideTable(g, t, startY, maxCharsPerLine){
   return y;
 }
 
-// Draws the "T# · Np" label above/outside the table shape — used only in
-// print-with-names mode, once the space inside the table is needed for the
-// guest list instead.
+// Rectangular tables with free/unassigned seating: the chairs on the
+// drawing don't correspond to specific guests, so — same as before — the
+// names are simply listed under the table's tags rather than centred inside.
+function appendFreeTableNamesForPrint(g, t, startY){
+  if(!printNames) return startY;
+  const names = (t.seatsData||[]).map(s=>s.name && s.name.trim()).filter(Boolean);
+  if(!names.length) return startY;
+  const maxCharsPerLine = 26;
+  const lines = [];
+  let current = '';
+  names.forEach(name=>{
+    const candidate = current ? current + ', ' + name : name;
+    if(candidate.length > maxCharsPerLine && current){
+      lines.push(current);
+      current = name;
+    } else {
+      current = candidate;
+    }
+  });
+  if(current) lines.push(current);
+  let y = startY;
+  lines.forEach(line=>{
+    const txt = document.createElementNS(NS,'text');
+    txt.setAttribute('text-anchor','middle');
+    txt.setAttribute('y', y);
+    txt.setAttribute('font-size', 7.5);
+    txt.setAttribute('font-weight', '600');
+    txt.setAttribute('fill', '#3b6fb0');
+    txt.textContent = line;
+    g.appendChild(txt);
+    y += 9.5;
+  });
+  return y;
+}
+
+// Draws the "T# · Np" label above/outside the table shape — round tables
+// only, since the space inside their circle is needed for the guest list.
 function drawTableHeaderOutside(g, text, y, color){
   const txt = document.createElementNS(NS,'text');
   txt.setAttribute('text-anchor','middle');
@@ -1244,7 +1299,7 @@ function redrawCanvas(){
           const ang = (i/n) * Math.PI*2 - Math.PI/2;
           const cxp = Math.cos(ang) * (r+7);
           const cyp = Math.sin(ang) * (r+7);
-          drawSeatDot(g, cxp, cyp, t.seatsData[i], i, '#2f6f6a', t.id, t.id===selectedId && i===selectedSeatIdx, null, t.rotation, true);
+          drawSeatDot(g, cxp, cyp, t.seatsData[i], i, '#2f6f6a', t.id, t.id===selectedId && i===selectedSeatIdx, null, t.rotation, false);
         }
         if(printNames) appendGuestListInsideTable(g, t, -6, 22);
       } else {
@@ -1263,26 +1318,22 @@ function redrawCanvas(){
       rect.setAttribute('stroke', isSel ? '#5c3a10' : 'var(--rect, #a6631f)');
       rect.setAttribute('stroke-width', isSel ? 3 : 2);
       g.appendChild(rect);
-      if(printNames){
-        drawTableHeaderOutside(g, `T${tableNumber} · ${t.seats}p`, -(h/2+14), '#a6631f');
-      } else {
-        const label = document.createElementNS(NS,'text');
-        label.setAttribute('text-anchor','middle');
-        label.setAttribute('font-size', 12);
-        label.setAttribute('font-weight', '700');
-        label.setAttribute('fill', '#a6631f');
-        label.setAttribute('y', 16);
-        label.textContent = `T${tableNumber}`;
-        g.appendChild(label);
-        const countLabel = document.createElementNS(NS,'text');
-        countLabel.setAttribute('text-anchor','middle');
-        countLabel.setAttribute('y', -4);
-        countLabel.setAttribute('font-size', 13);
-        countLabel.setAttribute('font-weight', '700');
-        countLabel.setAttribute('fill', '#a6631f');
-        countLabel.textContent = `${t.seats}p`;
-        g.appendChild(countLabel);
-      }
+      const label = document.createElementNS(NS,'text');
+      label.setAttribute('text-anchor','middle');
+      label.setAttribute('font-size', 12);
+      label.setAttribute('font-weight', '700');
+      label.setAttribute('fill', '#a6631f');
+      label.setAttribute('y', 16);
+      label.textContent = `T${tableNumber}`;
+      g.appendChild(label);
+      const countLabel = document.createElementNS(NS,'text');
+      countLabel.setAttribute('text-anchor','middle');
+      countLabel.setAttribute('y', -4);
+      countLabel.setAttribute('font-size', 13);
+      countLabel.setAttribute('font-weight', '700');
+      countLabel.setAttribute('fill', '#a6631f');
+      countLabel.textContent = `${t.seats}p`;
+      g.appendChild(countLabel);
       let nextY2 = appendTableTags(g, t, t.seatsAssigned ? h/2+18 : 28);
       if(t.seatsAssigned){
         // Each seat's physical slot comes from its own fixed "side" (assigned
@@ -1297,10 +1348,10 @@ function redrawCanvas(){
         let bottomIdx = -1;
         for(let i=t.seatsData.length-1;i>=0;i--){ if(t.seatsData[i].side==='bottom'){ bottomIdx=i; break; } }
         if(topIdx>=0){
-          drawSeatDot(g, 0, -(h/2+7), t.seatsData[topIdx], topIdx, '#a6631f', t.id, isSelSeat(topIdx), {dx:0,dy:-1}, t.rotation); // capotavola in alto
+          drawSeatDot(g, 0, -(h/2+7), t.seatsData[topIdx], topIdx, '#a6631f', t.id, isSelSeat(topIdx), {dx:0,dy:-1}, t.rotation, true); // capotavola in alto
         }
         if(bottomIdx>=0){
-          drawSeatDot(g, 0, h/2+7, t.seatsData[bottomIdx], bottomIdx, '#a6631f', t.id, isSelSeat(bottomIdx), {dx:0,dy:1}, t.rotation); // capotavola in basso
+          drawSeatDot(g, 0, h/2+7, t.seatsData[bottomIdx], bottomIdx, '#a6631f', t.id, isSelSeat(bottomIdx), {dx:0,dy:1}, t.rotation, true); // capotavola in basso
         }
         const leftIdxs = [], rightIdxs = [];
         t.seatsData.forEach((s,i)=>{
@@ -1310,13 +1361,12 @@ function redrawCanvas(){
         [ [-1, leftIdxs], [1, rightIdxs] ].forEach(([side, idxs])=>{
           idxs.forEach((seatIdx, pos)=>{
             const off = -h/2 + pitch*(pos+0.5);
-            drawSeatDot(g, side*(w/2+7), off, t.seatsData[seatIdx], seatIdx, '#a6631f', t.id, isSelSeat(seatIdx), {dx:side,dy:0}, t.rotation);
+            drawSeatDot(g, side*(w/2+7), off, t.seatsData[seatIdx], seatIdx, '#a6631f', t.id, isSelSeat(seatIdx), {dx:side,dy:0}, t.rotation, true);
           });
         });
-        if(printNames) appendGuestListInsideTable(g, t, -6, 30);
       } else {
         const afterNotes2 = appendNotesSummary(g, t, nextY2);
-        appendGuestListInsideTable(g, t, afterNotes2, 30);
+        appendFreeTableNamesForPrint(g, t, afterNotes2);
       }
       if(isSel){
         addResizeHandle(g, t.id, 0, -h/2, 'len', 'neg', 'ns-resize');
