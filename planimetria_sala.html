@@ -13,6 +13,8 @@
     --round-fill:#e4f0ee;
     --rect:#a6631f;
     --rect-fill:#f6ead9;
+    --oval:#6a4c93;
+    --oval-fill:#ece4f5;
     --danger:#b3402f;
     --muted:#8a867c;
     --panel:#ffffff;
@@ -133,6 +135,7 @@
   }
   button.round-btn{border-color:var(--round); background:var(--round);}
   button.rect-btn{border-color:var(--rect); background:var(--rect);}
+  button.oval-btn{border-color:var(--oval); background:var(--oval);}
   .quickrow{display:flex; gap:6px;}
   .quickrow button{font-size:11px; padding:7px 4px;}
   .stat{
@@ -204,6 +207,7 @@
   }
   .swatch-round{background:var(--round);}
   .swatch-rect{background:var(--rect);}
+  .swatch-oval{background:var(--oval);}
   .footer-note{
     font-size:10.5px;
     color:var(--muted);
@@ -392,7 +396,7 @@
     <div class="block">
       <h2>Aggiungi tavolo rotondo</h2>
       <div class="hint">Distanza tra sedie: <span id="roundSpacingLabel">60</span> cm</div>
-      <div class="hint">Tutti i tavoli rotondi hanno la stessa dimensione (quella per 11 persone): i numeri qui sotto scelgono solo quante sedie disporre.</div>
+      <div class="hint">Tutti i tavoli rotondi hanno la stessa dimensione (quella per 11 persone): i numeri qui sotto scelgono solo quante sedie disporre. Puoi comunque ridimensionare ogni singolo tavolo trascinando i quadratini quando è selezionato.</div>
       <div class="quickrow" style="margin-bottom:6px;">
         <button class="round-btn" onclick="addRoundBySeats(2)">2</button>
         <button class="round-btn" onclick="addRoundBySeats(3)">3</button>
@@ -414,6 +418,41 @@
           <button class="round-btn" style="width:auto; padding:6px 12px;" onclick="addRoundCustom()">+ Aggiungi</button>
         </div>
       </div>
+    </div>
+
+    <div class="block">
+      <h2>Aggiungi tavolo ovale</h2>
+      <div class="hint">Scegli quanti posti: la lunghezza si adatta automaticamente (larghezza da campo qui sotto).</div>
+      <div class="quickrow" style="margin-bottom:8px;">
+        <button class="oval-btn" onclick="addOvalBySeats(4)">4</button>
+        <button class="oval-btn" onclick="addOvalBySeats(6)">6</button>
+        <button class="oval-btn" onclick="addOvalBySeats(8)">8</button>
+        <button class="oval-btn" onclick="addOvalBySeats(10)">10</button>
+        <button class="oval-btn" onclick="addOvalBySeats(12)">12</button>
+      </div>
+      <div class="row">
+        <div>
+          <label for="ovalCustomSeats">Posti personalizzati</label>
+          <input type="number" id="ovalCustomSeats" value="8" min="2" max="30">
+        </div>
+        <div style="flex:0 0 auto; align-self:flex-end;">
+          <button class="oval-btn" style="width:auto; padding:6px 12px;" onclick="addOvalCustomSeats()">+ Aggiungi</button>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:2px;">oppure imposta lunghezza e larghezza esatte:</div>
+      <div class="row">
+        <div>
+          <label for="ovalLen">Lunghezza (cm)</label>
+          <input type="number" id="ovalLen" value="200" min="60" step="10">
+        </div>
+        <div>
+          <label for="ovalWid">Larghezza (cm)</label>
+          <input type="number" id="ovalWid" value="100" min="50" step="10">
+        </div>
+      </div>
+      <div class="hint" id="ovalPreview">≈ 8 posti stimati</div>
+      <button class="oval-btn" onclick="addOval()">+ Aggiungi ovale</button>
+      <div class="hint" style="margin-top:2px;">Anche i tavoli ovali si possono ridimensionare trascinando i quadratini quando sono selezionati.</div>
     </div>
 
     <div class="block">
@@ -466,6 +505,7 @@
     <div class="block">
       <h2>Riepilogo sala</h2>
       <div class="stat"><span>Tavoli rotondi</span><b id="cntRound">0</b></div>
+      <div class="stat"><span>Tavoli ovali</span><b id="cntOval">0</b></div>
       <div class="stat"><span>Tavoli rettangolari</span><b id="cntRect">0</b></div>
       <div class="stat"><span>Posti totali</span><b id="cntSeats">0</b></div>
       <div class="stat"><span>Persone con nome assegnato</span><b id="cntNamed">0</b></div>
@@ -619,7 +659,7 @@ function addLabel(xm, ym, text, size, bold, rotate90, muted){
 drawStatic();
 
 // ---------- Tables state ----------
-let tables = []; // {id, type:'round'|'rect', x, y (meters, center), rotation(deg), seats, lenM, widM, diaM}
+let tables = []; // {id, type:'round'|'rect'|'oval', x, y (meters, center), rotation(deg), seats, lenM, widM, diaM}
 let selectedId = null;
 // When true, the floor-plan drawing also prints each guest's name next to
 // their chair (and the list of names for tables with free/unassigned
@@ -663,8 +703,11 @@ function beginFieldEdit(){
 function seatSpacingM(){ return (parseFloat(document.getElementById('spacing').value)||60)/100; }
 
 const MIN_ROUND_DIAMETER_M = 0.7; // safety floor if spacing is set very small
-// All round tables in the venue are physically the same size (the one sized
-// for 11 guests) — choosing fewer seats just draws fewer chairs around it.
+// All round tables in the venue are physically the same size by default (the
+// one sized for 11 guests) — choosing fewer seats just draws fewer chairs
+// around it. A round table keeps this "standard" size until the person
+// drags its resize handles by hand (see t.customSized), at which point it
+// keeps whatever size they gave it even if the spacing setting changes later.
 function standardRoundDiameterM(){
   const spacing = seatSpacingM();
   return Math.max(MIN_ROUND_DIAMETER_M, (11 * spacing) / Math.PI);
@@ -780,7 +823,7 @@ function ensureSeatsData(t){
 // (bottom capotavola if present, otherwise the bottommost right-side seat)
 // and climbs back up the right side. This traces the table's perimeter.
 //
-// Round table: 1 starts at the top (12 o'clock) and numbers proceed
+// Round / oval table: 1 starts at the top (12 o'clock) and numbers proceed
 // clockwise around the table.
 function renumberSeats(t){
   const seats = t.seatsData;
@@ -832,6 +875,30 @@ function addRectCustomSeats(){
   const seats = parseInt(document.getElementById('rectCustomSeats').value) || 8;
   addRectBySeats(seats);
 }
+// Oval tables use the same length/width sizing math as rectangular ones
+// (an oval sized for N seats needs roughly the same footprint as a
+// rectangle for N seats) — only the drawing shape and seat arrangement
+// (evenly spaced around the curve, no capotavola) differ.
+function addOval(){
+  const lenCm = parseFloat(document.getElementById('ovalLen').value) || 200;
+  const widCm = parseFloat(document.getElementById('ovalWid').value) || 100;
+  const lenM = lenCm/100, widM = widCm/100;
+  const seats = computeRectSeats(lenM, widM);
+  pushTable({type:'oval', lenM, widM, seats, x: 4 + Math.random()*3, y: 3 + Math.random()*2, rotation:0});
+}
+function addOvalBySeats(seats){
+  const widCm = parseFloat(document.getElementById('ovalWid').value) || 100;
+  const widM = widCm/100;
+  const lenM = computeRectLengthForSeats(seats, widM);
+  const actualSeats = computeRectSeats(lenM, widM);
+  pushTable({type:'oval', lenM, widM, seats: actualSeats, x: 4 + Math.random()*3, y: 3 + Math.random()*2, rotation:0});
+  document.getElementById('ovalLen').value = Math.round(lenM*100);
+  updateOvalPreview();
+}
+function addOvalCustomSeats(){
+  const seats = parseInt(document.getElementById('ovalCustomSeats').value) || 8;
+  addOvalBySeats(seats);
+}
 function nextTableNumber(){
   return tables.length ? Math.max(...tables.map(t=>t.number||0)) + 1 : 1;
 }
@@ -843,10 +910,10 @@ function pushTable(t){
     if(t.headTop===undefined) t.headTop = false;
     if(t.headBottom===undefined) t.headBottom = false;
   }
-  // Di default i posti sono assegnati (numerati) su ogni tavolo, rotondo o
-  // rettangolare che sia: così, dall'elenco ospiti, si sa subito su quale
-  // sedia numerata mettere ciascun segnaposto. Resta comunque modificabile
-  // a mano per ogni singolo tavolo (pulsante "posti assegnati" nel pannello).
+  // Di default i posti sono assegnati (numerati) su ogni tavolo, di
+  // qualunque forma: così, dall'elenco ospiti, si sa subito su quale sedia
+  // numerata mettere ciascun segnaposto. Resta comunque modificabile a mano
+  // per ogni singolo tavolo (pulsante "posti assegnati" nel pannello).
   if(t.seatsAssigned===undefined) t.seatsAssigned = true;
   if(t.tableNote===undefined) t.tableNote = '';
   ensureSeatsData(t);
@@ -931,15 +998,33 @@ function updateRectPreview(){
 document.getElementById('rectLen').addEventListener('input', updateRectPreview);
 document.getElementById('rectWid').addEventListener('input', updateRectPreview);
 
+function updateOvalPreview(){
+  const lenCm = parseFloat(document.getElementById('ovalLen').value) || 200;
+  const widCm = parseFloat(document.getElementById('ovalWid').value) || 100;
+  const seats = computeRectSeats(lenCm/100, widCm/100);
+  document.getElementById('ovalPreview').textContent = `≈ ${seats} posti stimati`;
+}
+document.getElementById('ovalLen').addEventListener('input', updateOvalPreview);
+document.getElementById('ovalWid').addEventListener('input', updateOvalPreview);
+
 function onSpacingChange(){
   document.getElementById('roundSpacingLabel').textContent = document.getElementById('spacing').value;
-  // recompute seats for existing round tables (diameter fixed, seats recompute) and rect tables
+  // recompute seats for existing tables based on the new spacing:
+  // - round: diameter follows the new standard size UNLESS the person has
+  //   manually resized this specific table (t.customSized), in which case
+  //   their chosen size is left alone and only the seat count is untouched.
+  // - rect / oval: physical size is untouched, only the seat count derived
+  //   from the current size is recomputed.
   tables.forEach(t=>{
-    if(t.type==='round'){ t.diaM = standardRoundDiameterM(); }
+    if(t.type==='round'){
+      if(!t.customSized) t.diaM = standardRoundDiameterM();
+    }
     if(t.type==='rect'){ t.seats = computeRectTotalSeats(t); }
+    if(t.type==='oval'){ t.seats = computeRectSeats(t.lenM, t.widM); }
     ensureSeatsData(t);
   });
   updateRectPreview();
+  updateOvalPreview();
   render();
   saveState();
 }
@@ -1038,7 +1123,7 @@ function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSea
 
 // Draws, under the table's "T#" label: the free-text table note (es.
 // "Genitori sposo", "Testimoni"), then one line per tag in t.tags — each
-// colored grigio or rosso as chosen in the sidebar. Every line is clickable
+// colored grigio o rosso as chosen in the sidebar. Every line is clickable
 // directly on the drawing to edit its text or clear it (a prompt() —
 // leaving it empty deletes it). If there are no tags and this table's
 // seats are not individually assigned, a default grey "posti liberi" tag
@@ -1155,13 +1240,13 @@ function appendNotesSummary(g, t, startY){
   return y;
 }
 
-// When printing with names, round tables write the full guest list INSIDE
-// the circle — this is what keeps round tables with several close-together
-// chairs legible, instead of a name next to every chair. The whole circle
-// is available (tags/notes and the T#/count move to the header above), and
-// font size/line spacing shrink automatically for busier tables so the
-// list always stays inside the circle instead of spilling onto whatever is
-// drawn next to it in the room.
+// When printing with names, round and oval tables write the full guest
+// list INSIDE the shape — this is what keeps tables with several
+// close-together chairs legible, instead of a name next to every chair.
+// The whole interior is available (tags/notes and the T#/count move to the
+// header above), and font size/line spacing shrink automatically for
+// busier tables so the list always stays inside instead of spilling onto
+// whatever is drawn next to it in the room.
 // - Assigned seating: "1. Nome" per seat, sorted by seat number, so the
 //   list doubles as a legend for the numbered chairs.
 // - Free/unassigned seating: just the plain list of names.
@@ -1240,11 +1325,12 @@ function appendFreeTableNamesForPrint(g, t, startY){
   return y;
 }
 
-// Draws, above/outside the round table's circle: "T# · Np" (bold), then —
-// on a second, smaller line — any table note and tags (e.g. "posti liberi",
-// "menù bimbi"). Moving this whole header outside means the entire circle
-// stays free for the guest list, so a busy table's names never spill onto
-// whatever is drawn next to it in the room.
+// Draws, above/outside the table's shape: "T# · Np" (bold), then — on a
+// second, smaller line — any table note and tags (e.g. "posti liberi",
+// "menù bimbi"). Moving this whole header outside means the entire
+// interior stays free for the guest list, so a busy table's names never
+// spill onto whatever is drawn next to it in the room. Used by both round
+// and oval tables.
 function drawTableHeaderOutside(g, t, tableNumber, seats, y, color){
   const line1 = document.createElementNS(NS,'text');
   line1.setAttribute('text-anchor','middle');
@@ -1338,6 +1424,71 @@ function redrawCanvas(){
         if(printNames) appendGuestListInsideTable(g, t, 2*r-14, 22);
       } else {
         if(printNames) appendGuestListInsideTable(g, t, 2*r-14, 22);
+      }
+      if(isSel){
+        // Circular tables resize symmetrically around their centre: any of
+        // the 4 handles just sets a new radius (distance from the pointer
+        // to the centre), so the table stays a true circle.
+        addResizeHandle(g, t.id, 0, -r, 'dia', null, 'ns-resize');
+        addResizeHandle(g, t.id, 0, r, 'dia', null, 'ns-resize');
+        addResizeHandle(g, t.id, -r, 0, 'dia', null, 'ew-resize');
+        addResizeHandle(g, t.id, r, 0, 'dia', null, 'ew-resize');
+      }
+    } else if(t.type==='oval'){
+      const w = t.widM*SCALE, h = t.lenM*SCALE;
+      const ell = document.createElementNS(NS,'ellipse');
+      ell.setAttribute('rx', w/2); ell.setAttribute('ry', h/2);
+      ell.setAttribute('fill', 'var(--oval-fill, #ece4f5)');
+      ell.setAttribute('stroke', isSel ? '#3d2c5c' : 'var(--oval, #6a4c93)');
+      ell.setAttribute('stroke-width', isSel ? 3 : 2);
+      g.appendChild(ell);
+      if(printNames){
+        drawTableHeaderOutside(g, t, tableNumber, t.seats, -(h/2+24), '#6a4c93');
+      } else {
+        const label = document.createElementNS(NS,'text');
+        label.setAttribute('text-anchor','middle');
+        label.setAttribute('font-size', 12);
+        label.setAttribute('font-weight', '700');
+        label.setAttribute('fill', '#6a4c93');
+        label.setAttribute('y', 16);
+        label.textContent = `T${tableNumber}`;
+        g.appendChild(label);
+        const countLabel = document.createElementNS(NS,'text');
+        countLabel.setAttribute('text-anchor','middle');
+        countLabel.setAttribute('y', -4);
+        countLabel.setAttribute('font-size', 13);
+        countLabel.setAttribute('font-weight', '700');
+        countLabel.setAttribute('fill', '#6a4c93');
+        countLabel.textContent = `${t.seats}p`;
+        g.appendChild(countLabel);
+      }
+      if(!printNames){
+        let nextY = appendTableTags(g, t, t.seatsAssigned ? h/2+18 : 28);
+        if(!t.seatsAssigned) appendNotesSummary(g, t, nextY);
+      }
+      if(t.seatsAssigned){
+        // Chairs are spaced evenly by angle around the ellipse's perimeter
+        // (same approach as round tables) — seat 1 at the top, clockwise.
+        const n = t.seats;
+        const rx = w/2 + 7, ry = h/2 + 7;
+        for(let i=0;i<n;i++){
+          const ang = (i/n) * Math.PI*2 - Math.PI/2;
+          const cxp = Math.cos(ang) * rx;
+          const cyp = Math.sin(ang) * ry;
+          drawSeatDot(g, cxp, cyp, t.seatsData[i], i, '#6a4c93', t.id, t.id===selectedId && i===selectedSeatIdx, null, t.rotation, false);
+        }
+        if(printNames) appendGuestListInsideTable(g, t, h-14, Math.max(14, Math.round(w/6)));
+      } else {
+        if(printNames) appendGuestListInsideTable(g, t, h-14, Math.max(14, Math.round(w/6)));
+      }
+      if(isSel){
+        // Same drag-to-resize handles as the rectangular table: top/bottom
+        // stretch the length, left/right stretch the width, the opposite
+        // edge stays fixed in place.
+        addResizeHandle(g, t.id, 0, -h/2, 'len', 'neg', 'ns-resize');
+        addResizeHandle(g, t.id, 0, h/2, 'len', 'pos', 'ns-resize');
+        addResizeHandle(g, t.id, -w/2, 0, 'wid', 'neg', 'ew-resize');
+        addResizeHandle(g, t.id, w/2, 0, 'wid', 'pos', 'ew-resize');
       }
     } else {
       // Length runs vertically (top↔bottom) so the two "capotavola" (head)
@@ -1454,8 +1605,14 @@ function startDrag(e, id){
   svg.setPointerCapture(e.pointerId);
 }
 
-// ---------- resize handling (rectangular tables only) ----------
+// ---------- resize handling ----------
+// Rectangular AND oval tables (both have lenM/widM) share the same
+// two-dimension resize logic: dragging a handle stretches that one axis
+// while the OPPOSITE edge stays fixed in place. Round tables (diaM only)
+// use a simpler single-dimension version further below where the CENTRE
+// stays fixed instead, since a circle has no "opposite edge".
 const MIN_RECT_DIM_M = 0.35;
+const MIN_ROUND_DIA_M = 0.5;
 let resizing = null;
 function axisVectors(rotationDeg){
   const rad = (rotationDeg||0) * Math.PI/180;
@@ -1469,6 +1626,13 @@ function startResize(e, id, axis, handle){
   snapshotForUndo();
   selectTable(id);
   const t = tables.find(tb=>tb.id===id);
+  if(axis === 'dia'){
+    // Round table: any handle just sets the new radius from the pointer's
+    // distance to the table's centre, which never moves.
+    resizing = { id, axis, centerM: { x: t.x, y: t.y } };
+    svg.setPointerCapture(e.pointerId);
+    return;
+  }
   const { ax, ay } = axisVectors(t.rotation);
   const dirVec = axis === 'len' ? ax : ay;
   const half = (axis === 'len' ? t.lenM : t.widM) / 2;
@@ -1481,6 +1645,14 @@ function startResize(e, id, axis, handle){
 function onResizeMove(ptM){
   const t = tables.find(tb=>tb.id===resizing.id);
   if(!t) return;
+  if(resizing.axis === 'dia'){
+    const { centerM } = resizing;
+    const dist = Math.hypot(ptM.x - centerM.x, ptM.y - centerM.y);
+    t.diaM = Math.max(MIN_ROUND_DIA_M, dist*2);
+    t.customSized = true; // keep this table's own size even if spacing changes later
+    redrawCanvas();
+    return;
+  }
   const { axis, sign, dirVec, fixedM } = resizing;
   const vx = ptM.x - fixedM.x, vy = ptM.y - fixedM.y;
   const proj = (vx*dirVec.x + vy*dirVec.y) * sign;
@@ -1565,34 +1737,55 @@ function deleteSelected(){
   saveState();
 }
 
-// Switches a table between round and rectangular in place — all seats,
-// guest names/notes/child-seat flags and seat numbers are kept exactly as
-// they are; only the shape and physical size change to fit the same count.
+// Cycles a table through the three shapes (round → rettangolare → ovale →
+// round…) in place — all seats, guest names/notes/child-seat flags and
+// seat numbers are kept exactly as they are; only the shape and physical
+// size change to fit the same count.
+const SHAPE_CYCLE = ['round', 'rect', 'oval'];
+const SHAPE_LABEL = { round: 'rotondo', rect: 'rettangolare', oval: 'ovale' };
+function nextShapeFor(type){
+  const idx = SHAPE_CYCLE.indexOf(type);
+  return SHAPE_CYCLE[(idx + 1) % SHAPE_CYCLE.length];
+}
 function convertTableType(id){
   const t = tables.find(tb=>tb.id===id);
   if(!t) return;
   snapshotForUndo();
-  if(t.type==='round'){
+  const target = nextShapeFor(t.type);
+  // leaving a rectangular shape: drop the side/head-seat bookkeeping, the
+  // other shapes don't use it and ensureSeatsData will lay seats out fresh
+  (t.seatsData||[]).forEach(s=>{ delete s.side; });
+  if(target === 'rect'){
     t.type = 'rect';
     t.widM = t.widM || 0.8; // default width if it never had one (80cm)
     t.headTop = false;
     t.headBottom = false;
     t.lenM = computeRectLengthForSeats(t.seats, t.widM);
+  } else if(target === 'oval'){
+    t.type = 'oval';
+    t.widM = t.widM || 0.9;
+    t.lenM = computeRectLengthForSeats(t.seats, t.widM);
+    delete t.headTop;
+    delete t.headBottom;
   } else {
     t.type = 'round';
-    t.diaM = standardRoundDiameterM();
+    t.diaM = t.diaM && t.customSized ? t.diaM : standardRoundDiameterM();
+    delete t.headTop;
+    delete t.headBottom;
   }
+  ensureSeatsData(t);
   render();
   saveState();
 }
 
-// Splits one table into N separate tables (round or rectangular, chosen by
-// the person), arranged side by side. Guests already assigned (name, note,
-// child flag) travel with their group and land on the new table; groups are
-// sized as evenly as possible so no new table ends up empty. Seat "side"
-// (left/right on rectangular tables) is cleared so each new table reassigns
-// left/right fresh and balanced — seat NUMBERS are always recomputed from
-// scratch anyway (see renumberSeats), so nothing needs fixing there.
+// Splits one table into N separate tables (round, rectangular or oval,
+// chosen by the person), arranged side by side. Guests already assigned
+// (name, note, child flag) travel with their group and land on the new
+// table; groups are sized as evenly as possible so no new table ends up
+// empty. Seat "side" (left/right on rectangular tables) is cleared so each
+// new table reassigns left/right fresh and balanced — seat NUMBERS are
+// always recomputed from scratch anyway (see renumberSeats), so nothing
+// needs fixing there.
 function splitTableInto(id, count, shape){
   const t = tables.find(tb=>tb.id===id);
   if(!t) return;
@@ -1613,7 +1806,7 @@ function splitTableInto(id, count, shape){
   groups.forEach(g=>g.forEach(s=>{ delete s.side; }));
 
   const dia = standardRoundDiameterM();
-  const widM = parseFloat(document.getElementById('rectWid').value)/100 || 0.9;
+  const widM = shape==='round' ? dia : (parseFloat(document.getElementById(shape==='oval' ? 'ovalWid' : 'rectWid').value)/100 || 0.9);
   const gap = 0.4; // meters between the new tables
   const spans = groups.map(()=> shape==='round' ? dia : widM);
   const totalSpan = spans.reduce((a,b)=>a+b,0) + gap*(count-1);
@@ -1624,9 +1817,12 @@ function splitTableInto(id, count, shape){
     const cx = curX + w/2;
     curX += w + gap;
     if(shape==='round'){
-      return { id: idSeq++, number: nextTableNumber(), type:'round', diaM: dia, seats: g.length, seatsData: g, x: cx, y: t.y, rotation: 0, headTop:false, headBottom:false };
+      return { id: idSeq++, number: nextTableNumber(), type:'round', diaM: dia, seats: g.length, seatsData: g, x: cx, y: t.y, rotation: 0 };
     }
     const lenM = computeRectLengthForSeats(g.length, widM);
+    if(shape==='oval'){
+      return { id: idSeq++, number: nextTableNumber(), type:'oval', lenM, widM, seats: g.length, seatsData: g, x: cx, y: t.y, rotation: 0 };
+    }
     return { id: idSeq++, number: nextTableNumber(), type:'rect', lenM, widM, seats: g.length, seatsData: g, x: cx, y: t.y, rotation: 0, headTop:false, headBottom:false };
   });
 
@@ -1795,7 +1991,9 @@ function updateSidebar(){
     const tableNumber = t.number || (tables.findIndex(tb=>tb.id===t.id) + 1);
     const desc = t.type==='round'
       ? `Rotondo · Ø ${(t.diaM*100).toFixed(0)} cm · ${t.seats} posti`
-      : `Rettangolare · ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)} cm · ${t.seats} posti`;
+      : t.type==='oval'
+        ? `Ovale · ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)} cm · ${t.seats} posti`
+        : `Rettangolare · ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)} cm · ${t.seats} posti`;
     const displayOrder = t.seatsData.map((s,i)=>i).sort((a,b)=>(t.seatsData[a].number||0)-(t.seatsData[b].number||0));
     const sideLabel = { top:'Capotavola (sopra)', left:'Lato sinistro (dall\'alto verso il basso)', bottom:'Capotavola (sotto)', right:'Lato destro (dal basso verso l\'alto)' };
     let prevSide = null;
@@ -1894,18 +2092,19 @@ function updateSidebar(){
       ` : ''}
       <button class="secondary" onclick="rotateSelected(15)">↻ Ruota 15°</button>
       <button class="secondary" onclick="rotateSelected(90)">↻ Ruota 90°</button>
-      <button class="secondary" onclick="convertTableType(${t.id})">⇄ Cambia in ${t.type==='round' ? 'rettangolare' : 'rotondo'}</button>
+      <button class="secondary" onclick="convertTableType(${t.id})">⇄ Cambia in ${SHAPE_LABEL[nextShapeFor(t.type)]}</button>
       ${t.seats>=2 ? `
       <div class="seatcount-row" style="margin-top:10px;">
         <span>Dividi in</span>
         <input type="number" id="splitCount-${t.id}" min="2" max="${t.seats}" value="2" style="width:50px; flex:none;">
         <button class="secondary" style="width:auto;" onclick="splitTableInto(${t.id}, parseInt(document.getElementById('splitCount-${t.id}').value)||2, 'round')">tondi</button>
+        <button class="secondary" style="width:auto;" onclick="splitTableInto(${t.id}, parseInt(document.getElementById('splitCount-${t.id}').value)||2, 'oval')">ovali</button>
         <button class="secondary" style="width:auto;" onclick="splitTableInto(${t.id}, parseInt(document.getElementById('splitCount-${t.id}').value)||2, 'rect')">rettangolari</button>
       </div>
       <div class="hint" style="margin-top:-6px;">Divide questo tavolo in N tavoli separati, distribuendo gli ospiti già assegnati il più possibile in modo uniforme.</div>
       ` : ''}
       <button class="danger" onclick="deleteSelected()">🗑 Elimina tavolo</button>
-      ${t.type==='rect' ? '<div class="hint" style="margin-top:8px;">Trascina i quadratini agli angoli/lati per allungare o accorciare il tavolo direttamente sul disegno.</div>' : ''}
+      ${t.type!=='round' ? '<div class="hint" style="margin-top:8px;">Trascina i quadratini agli angoli/lati per allungare o accorciare il tavolo direttamente sul disegno.</div>' : '<div class="hint" style="margin-top:8px;">Trascina uno dei quadratini sul bordo per ingrandire o rimpicciolire il tavolo (resta sempre un cerchio).</div>'}
       <div class="seat-editor">
         <div class="hint" style="margin-bottom:8px;">Clicca una sedia nel disegno (o su "Sedia N" qui sotto) per selezionarla: resta evidenziata finché non la deselezioni scegliendone un'altra o un altro tavolo, e "− Togli posto" toglierà esattamente quella. Con "inserisci qui" / "rimuovi" su ogni riga puoi aggiungere una sedia vuota tra due già assegnate, o toglierne una precisa (es. a capotavola): il numero e i dati delle altre sedie non cambiano.</div>
         <div class="seat-legend">
@@ -1919,6 +2118,7 @@ function updateSidebar(){
   }
 
   document.getElementById('cntRound').textContent = tables.filter(t=>t.type==='round').length;
+  document.getElementById('cntOval').textContent = tables.filter(t=>t.type==='oval').length;
   document.getElementById('cntRect').textContent = tables.filter(t=>t.type==='rect').length;
   document.getElementById('cntSeats').textContent = tables.reduce((s,t)=>s+t.seats,0);
   document.getElementById('cntNamed').textContent = tables.reduce((s,t)=>s+(t.seatsData||[]).filter(seat=>seat.name && seat.name.trim()).length,0);
@@ -1929,10 +2129,12 @@ function updateSidebar(){
     list.innerHTML = '<div class="hint">Nessun tavolo aggiunto.</div>';
   } else {
     list.innerHTML = tables.map((t,i)=>{
-      const swatch = t.type==='round' ? 'swatch-round' : 'swatch-rect';
+      const swatch = t.type==='round' ? 'swatch-round' : (t.type==='oval' ? 'swatch-oval' : 'swatch-rect');
       const sizeDesc = t.type==='round'
         ? `Rotondo Ø${(t.diaM*100).toFixed(0)}cm`
-        : `Rett. ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)}cm`;
+        : t.type==='oval'
+          ? `Ovale ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)}cm`
+          : `Rett. ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)}cm`;
       const isSel = t.id===selectedId;
       const extraBits = [];
       if(t.tableNote && t.tableNote.trim()) extraBits.push(t.tableNote.trim());
@@ -1960,6 +2162,7 @@ function updateSidebar(){
         <div class="hint" style="margin-bottom:6px;">${n} tavoli selezionati (spunta ✓ nell'elenco) — unisci in:</div>
         <div class="quickrow">
           <button class="round-btn" onclick="mergeSelectedTables('round')">un tavolo tondo</button>
+          <button class="oval-btn" onclick="mergeSelectedTables('oval')">un tavolo ovale</button>
           <button class="rect-btn" onclick="mergeSelectedTables('rect')">un tavolo rettangolare</button>
         </div>`;
     } else {
@@ -1974,9 +2177,10 @@ function toggleMergeSelect(id, checked){
 }
 
 // Merges every table currently checked in the table list into a single new
-// table (round or rectangular, chosen by the person). All guests already
-// assigned (name, note, child flag) are kept and simply combined; only the
-// seat numbers are recomputed (see renumberSeats) to match the new shape.
+// table (round, oval or rectangular, chosen by the person). All guests
+// already assigned (name, note, child flag) are kept and simply combined;
+// only the seat numbers are recomputed (see renumberSeats) to match the
+// new shape.
 function mergeSelectedTables(shape){
   const ids = tables.filter(t=>mergeSelection.has(t.id)).map(t=>t.id); // keep list order
   if(ids.length<2) return;
@@ -1991,7 +2195,12 @@ function mergeSelectedTables(shape){
   let newTable;
   if(shape==='round'){
     newTable = { id: idSeq++, number: nextTableNumber(), type:'round', diaM: standardRoundDiameterM(),
-      seats: combined.length, seatsData: combined, x: avgX, y: avgY, rotation: 0, headTop:false, headBottom:false };
+      seats: combined.length, seatsData: combined, x: avgX, y: avgY, rotation: 0 };
+  } else if(shape==='oval'){
+    const widM = parseFloat(document.getElementById('ovalWid').value)/100 || 0.9;
+    const lenM = computeRectLengthForSeats(combined.length, widM);
+    newTable = { id: idSeq++, number: nextTableNumber(), type:'oval', lenM, widM,
+      seats: combined.length, seatsData: combined, x: avgX, y: avgY, rotation: 0 };
   } else {
     const widM = parseFloat(document.getElementById('rectWid').value)/100 || 0.9;
     const lenM = computeRectLengthForSeats(combined.length, widM);
@@ -2060,7 +2269,9 @@ function buildPrintGuestList(){
     const num = t.number || (i+1);
     const typeDesc = t.type==='round'
       ? `Tavolo rotondo · Ø ${(t.diaM*100).toFixed(0)} cm · ${t.seats} posti`
-      : `Tavolo rettangolare · ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)} cm · ${t.seats} posti`;
+      : t.type==='oval'
+        ? `Tavolo ovale · ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)} cm · ${t.seats} posti`
+        : `Tavolo rettangolare · ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)} cm · ${t.seats} posti`;
     const extraBits = [];
     if(t.tableNote && t.tableNote.trim()) extraBits.push(escapeHtml(t.tableNote.trim()));
     extraBits.push(t.seatsAssigned ? 'posti assegnati' : 'posti liberi');
@@ -2149,6 +2360,7 @@ function loadState(){
   }
   render();
   updateRectPreview();
+  updateOvalPreview();
 }
 
 function exportLayout(){
@@ -2180,6 +2392,7 @@ function importLayout(event){
       selectedId = null;
       render();
       updateRectPreview();
+      updateOvalPreview();
       saveState();
     }catch(err){
       alert('File non valido: impossibile leggere il layout.');
@@ -2293,6 +2506,7 @@ async function connectExistingDriveFile(){
     startSyncPolling();
     render();
     updateRectPreview();
+    updateOvalPreview();
     renderSyncStatus('Collegato!');
   }catch(err){
     if(err.name!=='AbortError') console.error('Errore collegamento file', err);
@@ -2330,6 +2544,7 @@ async function reconnectLinkedFile(){
     startSyncPolling();
     render();
     updateRectPreview();
+    updateOvalPreview();
     renderSyncStatus('Riconnesso!');
   }catch(err){ console.error('Errore riconnessione', err); }
 }
@@ -2410,6 +2625,7 @@ function startSyncPolling(){
           selectedId = null;
           render();
           updateRectPreview();
+          updateOvalPreview();
           renderSyncStatus('Aggiornato da un altro PC');
         }
       }
@@ -2435,6 +2651,7 @@ async function tryReconnectLinkedFileOnStartup(){
       startSyncPolling();
       render();
       updateRectPreview();
+      updateOvalPreview();
     } else {
       pendingHandle = handle;
     }
@@ -2524,6 +2741,7 @@ function onGdriveSignedIn(silent){
       startGdrivePolling();
       render();
       updateRectPreview();
+      updateOvalPreview();
       renderGdriveStatus(silent ? null : 'Connesso!');
     });
   } else {
@@ -2586,6 +2804,7 @@ function gdrivePickerCallback(data){
     startGdrivePolling();
     render();
     updateRectPreview();
+    updateOvalPreview();
     renderGdriveStatus('Collegato!');
   });
 }
@@ -2695,6 +2914,7 @@ function startGdrivePolling(){
           selectedId = null;
           render();
           updateRectPreview();
+          updateOvalPreview();
           renderGdriveStatus('Aggiornato da un altro PC');
         }
       }
