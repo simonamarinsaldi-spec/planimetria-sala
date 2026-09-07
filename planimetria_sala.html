@@ -758,6 +758,30 @@ function countRectSides(seatsData){
   seatsData.forEach(s=>{ if(s.side==='left') c.left++; else if(s.side==='right') c.right++; });
   return c;
 }
+// Keeps the left/right side counts of a rectangular table as balanced as
+// possible (difference of at most 1 seat) after ANY change to the seat
+// list (add, remove, insert). If one side has grown too heavy, the seat(s)
+// closest to the "loose end" of that side are moved to the lighter side —
+// only the side label changes, the seat's name/note/child/number stay
+// exactly as they were. Because seat numbers are always re-derived from
+// position (see renumberSeats), this keeps "1 in alto a sinistra" / ultimo
+// numero in alto a destra" correct automatically.
+function rebalanceRectSides(t){
+  if(t.type!=='rect') return;
+  let counts = countRectSides(t.seatsData);
+  let guard = t.seatsData.length + 2; // safety against infinite loops
+  while(Math.abs(counts.left - counts.right) > 1 && guard-- > 0){
+    const fromSide = counts.left > counts.right ? 'left' : 'right';
+    const toSide = fromSide === 'left' ? 'right' : 'left';
+    let idx = -1;
+    for(let i=t.seatsData.length-1; i>=0; i--){
+      if(t.seatsData[i].side===fromSide){ idx = i; break; }
+    }
+    if(idx < 0) break;
+    t.seatsData[idx].side = toSide;
+    counts = countRectSides(t.seatsData);
+  }
+}
 function assignRectSides(t){
   if(!t.seatsData.some(s=>!s.side)) return; // everything already has a side
   const n = t.seatsData.length;
@@ -807,6 +831,10 @@ function ensureSeatsData(t){
       if(idx < 0) break;
       t.seatsData.splice(idx, 1);
     }
+    // Whatever path got us here (bulk grow/shrink above, or a direct splice
+    // done elsewhere like insertSeatBefore/removeSeat/addSideSeat), make
+    // sure the two sides never drift more than 1 seat apart.
+    rebalanceRectSides(t);
   } else {
     while(t.seatsData.length < t.seats) t.seatsData.push({name:'', note:'', child:false, number: nextSeatNumber(t)});
     if(t.seatsData.length > t.seats) t.seatsData.length = t.seats;
@@ -1855,7 +1883,10 @@ function changeSeats(delta){
 // already-assigned guests). Only the new chair gets a (new) number — every
 // existing guest keeps their own seat number and data exactly as before.
 // On a rectangular table the new chair inherits the SAME fixed side as its
-// neighbor, so it never lands on the opposite side of the table.
+// neighbor, so it never lands on the opposite side of the table — any
+// resulting left/right imbalance is then corrected by rebalanceRectSides()
+// (called via ensureSeatsData on the next render), which reassigns the
+// side of the seat least likely to be noticed (nearest the loose end).
 function insertSeatBefore(tableId, idx){
   const t = tables.find(tb=>tb.id===tableId);
   if(!t) return;
@@ -1872,13 +1903,16 @@ function insertSeatBefore(tableId, idx){
   t.seatsData.splice(idx, 0, newSeat);
   applySeatCount(t, t.seatsData.length);
   selectedSeatIdx = null; // indices below the insert point have shifted
+  ensureSeatsData(t); // re-derive sides/numbers and rebalance left/right immediately
   render();
   saveState();
 }
 
 // Remove one specific chair (e.g. a head-of-table seat). The remaining
 // chairs keep their own original seat numbers, side, and guest data
-// untouched — removing one chair never moves any other.
+// untouched — removing one chair never moves any other. If this leaves the
+// two sides unbalanced, ensureSeatsData()'s rebalance step (below) restores
+// symmetry by moving one seat's side label, not by moving anyone's data.
 function removeSeat(tableId, idx){
   const t = tables.find(tb=>tb.id===tableId);
   if(!t) return;
@@ -1898,10 +1932,18 @@ function removeSeat(tableId, idx){
 }
 
 // The index (within seatsData) that "− Togli posto" would remove if no
-// chair has been explicitly picked: the last SIDE seat — never a
-// capotavola chair the person added on purpose.
+// chair has been explicitly picked: the last seat on whichever SIDE
+// currently has more chairs (ties default to the left side), so repeated
+// clicks keep taking from the heavier side and the table stays symmetric —
+// never a capotavola chair the person added on purpose.
 function defaultRemovableSeatIdx(t){
   if(t.type==='rect'){
+    const counts = countRectSides(t.seatsData);
+    const targetSide = counts.left >= counts.right ? 'left' : 'right';
+    for(let i=t.seatsData.length-1; i>=0; i--){
+      if(t.seatsData[i].side===targetSide) return i;
+    }
+    // fallback: any side seat, in case the preferred side is somehow empty
     for(let i=t.seatsData.length-1; i>=0; i--){
       if(t.seatsData[i].side==='left' || t.seatsData[i].side==='right') return i;
     }
@@ -1913,7 +1955,8 @@ function defaultRemovableSeatIdx(t){
 // (immediately after it, same side), so it lands exactly where the person
 // clicked and every other seat — including the ones on the other side and
 // any capotavola — stays exactly where it was. If no chair is picked (or a
-// capotavola chair was picked), adds a new balanced side seat instead.
+// capotavola chair was picked), adds a new balanced side seat instead
+// (always to whichever side currently has fewer chairs).
 function addSideSeat(tableId){
   const t = tables.find(tb=>tb.id===tableId);
   if(!t) return;
@@ -1937,13 +1980,15 @@ function addSideSeat(tableId){
   }
   t.seatsData.splice(insertAt, 0, newSeat);
   applySeatCount(t, t.seatsData.length);
+  ensureSeatsData(t); // re-derive numbers and rebalance left/right immediately
   render();
   saveState();
 }
 
-// "− Togli posto": removes exattamente la sedia scelta cliccandola
-// (evidenziata). Se nessuna è selezionata, rimuove l'ultima laterale — mai
-// una sedia di capotavola — così non si toglie "a caso".
+// "− Togli posto": removes esattamente la sedia scelta cliccandola
+// (evidenziata). Se nessuna è selezionata, rimuove l'ultima sedia del lato
+// che ne ha di più (mai una sedia di capotavola), così i due lati restano
+// sempre il più possibile simmetrici (differenza massima di 1 sedia).
 function removeSideSeat(tableId){
   const t = tables.find(tb=>tb.id===tableId);
   if(!t) return;
@@ -2082,7 +2127,7 @@ function updateSidebar(){
         <button class="secondary" onclick="removeSideSeat(${t.id})" title="Rimuove ${removeLabel}">− Togli posto</button>
         <button class="secondary" onclick="addSideSeat(${t.id})">+ Aggiungi posto</button>
       </div>
-      ${removeLabel ? `<div class="hint" style="margin-top:-6px;">"− Togli posto" rimuoverà: <b>${removeLabel}</b>${selectedSeatIdx==null ? ' (nessuna sedia selezionata: verrà tolta l\'ultima laterale)' : ''}. "+ Aggiungi posto" ne inserirà una nuova subito dopo${selectedSeatIdx==null ? ' l\'ultima laterale (nessuna sedia selezionata)' : ' quella selezionata'}, senza toccare le altre.</div>` : ''}
+      ${removeLabel ? `<div class="hint" style="margin-top:-6px;">"− Togli posto" rimuoverà: <b>${removeLabel}</b>${selectedSeatIdx==null ? ' (nessuna sedia selezionata: verrà tolta l\'ultima del lato con più sedie)' : ''}. "+ Aggiungi posto" ne inserirà una nuova subito dopo${selectedSeatIdx==null ? ' sul lato con meno sedie (nessuna sedia selezionata)' : ' quella selezionata'}, mantenendo i due lati bilanciati.</div>` : ''}
       ${t.type==='rect' ? `
       <div class="seatcount-row" style="margin-top:10px;">
         <span>Capotavola</span>
