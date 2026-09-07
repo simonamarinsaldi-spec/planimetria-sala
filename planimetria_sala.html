@@ -1521,12 +1521,12 @@ function redrawCanvas(){
       let nextY2 = appendTableTags(g, t, t.seatsAssigned ? h/2+18 : 28);
       if(t.seatsAssigned){
         // Each seat's physical slot comes from its own fixed "side" (assigned
-        // once in ensureSeatsData) and a FIXED pitch — not from dividing the
-        // table evenly by however many seats currently exist. So adding or
-        // removing one chair only affects chairs after it on the SAME side;
-        // everything else (the other side, the head chairs) stays exactly
-        // where it was.
-        const pitch = seatSpacingM()*SCALE;
+        // once in ensureSeatsData). Side seats are spread EVENLY across the
+        // table's full current length (symmetric, recalculated every time
+        // seats are added/removed) — not from a fixed pitch stacked at one
+        // end — so left/right chairs always fan out to fill the table.
+        // Head chairs (capotavola) are unaffected by this and stay fixed at
+        // the very top/bottom.
         const isSelSeat = idx => t.id===selectedId && idx===selectedSeatIdx;
         const topIdx = t.seatsData.findIndex(s=>s.side==='top');
         let bottomIdx = -1;
@@ -1543,8 +1543,9 @@ function redrawCanvas(){
           else if(s.side==='right') rightIdxs.push(i);
         });
         [ [-1, leftIdxs], [1, rightIdxs] ].forEach(([side, idxs])=>{
+          const n = idxs.length;
           idxs.forEach((seatIdx, pos)=>{
-            const off = -h/2 + pitch*(pos+0.5);
+            const off = n>0 ? (-h/2 + (h/n)*(pos+0.5)) : 0;
             drawSeatDot(g, side*(w/2+7), off, t.seatsData[seatIdx], seatIdx, '#a6631f', t.id, isSelSeat(seatIdx), {dx:side,dy:0}, t.rotation, true);
           });
         });
@@ -1940,9 +1941,9 @@ function addSideSeat(tableId){
   saveState();
 }
 
-// "− Togli posto": removes exactly the chair the person picked by clicking
-// it (highlighted). If none is picked, falls back to the last side seat —
-// never a capotavola chair — so nothing is removed "a caso" (at random).
+// "− Togli posto": removes exattamente la sedia scelta cliccandola
+// (evidenziata). Se nessuna è selezionata, rimuove l'ultima laterale — mai
+// una sedia di capotavola — così non si toglie "a caso".
 function removeSideSeat(tableId){
   const t = tables.find(tb=>tb.id===tableId);
   if(!t) return;
@@ -2256,6 +2257,13 @@ function escapeHtml(str){
   return (str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// Tables printed/exported in numeric order (by the table's own "Numero
+// tavolo" field, 1, 2, 3, ...) regardless of the order they appear in the
+// on-screen sidebar list (which follows drag/drop reordering instead).
+function tablesInPrintOrder(){
+  return [...tables].sort((a,b)=>(a.number||0)-(b.number||0));
+}
+
 function buildPrintGuestList(){
   const container = document.getElementById('printGuestList');
   const totalSeats = tables.reduce((s,t)=>s+t.seats,0);
@@ -2265,7 +2273,8 @@ function buildPrintGuestList(){
     container.innerHTML = '<h2>Elenco tavoli e ospiti</h2><p class="print-empty">Nessun tavolo aggiunto.</p>';
     return;
   }
-  const blocks = tables.map((t,i)=>{
+  const orderedTables = tablesInPrintOrder();
+  const blocks = orderedTables.map((t,i)=>{
     const num = t.number || (i+1);
     const typeDesc = t.type==='round'
       ? `Tavolo rotondo · Ø ${(t.diaM*100).toFixed(0)} cm · ${t.seats} posti`
