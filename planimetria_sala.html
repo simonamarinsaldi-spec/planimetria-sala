@@ -2536,7 +2536,12 @@ function extractExtraNote(note){
   let s = note || '';
   CATEGORY_SIGNAL_PATTERNS.forEach(p=>{ s = s.replace(p, ' '); });
   s = s.replace(/seggiolin[oi]?/gi, ' ');
-  s = s.replace(/[+,;/]/g, ' ').replace(/\s+/g, ' ').trim();
+  s = s.replace(/[+,;/()]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Un "1" scritto davanti alla nota (es. "1 incinta", "1 menù carne") è
+  // solo un'abitudine per indicare "una persona" — non è un'informazione
+  // da mostrare, quindi va tolto. Numeri altrove nella nota (es. età
+  // scritte senza il trattino) restano invece intatti.
+  s = s.replace(/^\d+\s*/, '').trim();
   return s;
 }
 function noteHasSeggiolino(note){
