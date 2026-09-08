@@ -382,6 +382,67 @@
     .print-seat-table th{background:#f2f0e8;}
     .print-empty{font-size:12px; color:#8a867c;}
     .print-summary{font-size:12.5px; margin:0 0 16px 0; color:#333;}
+    .print-tableau-section{padding:20px;}
+    .print-tableau-section h2{
+      font-size:14px; letter-spacing:0.08em; text-transform:uppercase;
+      margin:0 0 14px 0; border-bottom:1px solid #1a1a1a; padding-bottom:6px;
+    }
+    .print-tableau-table{break-inside: avoid; page-break-inside: avoid; margin-bottom:16px;}
+    .print-tableau-table h3{font-size:13px; margin:0 0 6px 0; border-bottom:1px solid #ccc; padding-bottom:4px;}
+    .print-tableau-table ol{margin:0; padding-left:22px; font-size:12px; line-height:1.7;}
+    /* Toggled on <body> right before printing so each print button only
+       prints its own section: floor-plan prints hide the tableau list,
+       and the tableau print hides the floor plan / guest list / summary. */
+    body.print-tableau-mode #printGuestList,
+    body.print-tableau-mode #printMenuSummary,
+    body.print-tableau-mode #printTotals,
+    body.print-tableau-mode .canvas-wrap{ display:none !important; }
+    .print-tableau-section{ display:none; }
+  }
+  @media print{
+    body.print-tableau-mode .print-tableau-section{ display:block !important; }
+  }
+</style>
+<style>
+  /* Interactive "tableau order" modal — lets the person reorder, per
+     table, the sequence in which guest names should be written on the
+     physical tableau board, independent of physical seat numbers. */
+  .tableau-modal{
+    position:fixed; inset:0; background:rgba(26,26,26,0.55); z-index:1000;
+    display:none; align-items:center; justify-content:center; padding:24px;
+  }
+  .tableau-modal-inner{
+    background:#fff; border-radius:6px; max-width:760px; width:100%; max-height:88vh;
+    overflow-y:auto; padding:20px 24px; box-shadow:0 8px 30px rgba(0,0,0,0.28);
+  }
+  .tableau-modal-header{
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:6px; gap:10px;
+  }
+  .tableau-modal-header h2{
+    font-size:14px; letter-spacing:0.1em; text-transform:uppercase; margin:0;
+  }
+  .tableau-modal-header button{ width:auto; flex-shrink:0; }
+  .tableau-table-block{ margin:16px 0 20px 0; }
+  .tableau-table-block h3{
+    font-size:12.5px; margin:0 0 8px 0; border-bottom:1px solid #ddd8cc;
+    padding-bottom:5px; color:var(--ink);
+  }
+  .tableau-count{ color:var(--muted); font-weight:400; }
+  .tableau-row{
+    display:flex; align-items:center; gap:8px; padding:5px 4px;
+    border-bottom:1px solid #f0ede3; font-size:12.5px;
+  }
+  .tableau-row .pos{ width:24px; color:var(--muted); flex-shrink:0; text-align:right; }
+  .tableau-row .name{ flex:1; }
+  .tableau-row-actions{ display:flex; gap:3px; flex-shrink:0; }
+  .tableau-row-actions button{
+    width:auto; margin-bottom:0; padding:3px 8px; font-size:11px;
+    background:#fff; color:var(--ink); border:1px solid #ddd8cc;
+  }
+  .tableau-row-actions button:disabled{ opacity:0.3; cursor:default; }
+  @media print{
+    .tableau-modal{ display:none !important; }
   }
 </style>
 
@@ -582,9 +643,14 @@
       <div class="hint" id="syncSupportedHint" style="margin-top:6px;">Scegli o crea un file <code>.json</code> dentro la cartella sincronizzata (es. Google Drive, Dropbox, OneDrive). Da quel momento ogni modifica viene salvata lì automaticamente, e se un altro PC modifica lo stesso file lo vedrai aggiornarsi qui entro pochi secondi.</div>
     </div>
 
+    <button class="secondary" onclick="openTableauModal()">📋 Ordine Tableau</button>
+    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Apri l'elenco di tutti i tavoli e tutti i nomi per decidere l'ordine di scrittura sul tableau (diverso dal numero di sedia).</div>
+
     <button class="secondary" onclick="exportPDF()">🖨 Stampa / Salva come PDF</button>
     <button class="secondary" onclick="exportPDFWithNames()">🖨 Stampa con nomi (per A3/plotter)</button>
     <div class="hint" style="margin-top:-4px; margin-bottom:8px;">La prima stampa è quella di sempre (solo numeri sulle sedie). La seconda aggiunge il nome accanto a ogni sedia assegnata e l'elenco nomi sui tavoli a posti liberi: usala per una copia grande da stampare in A3 o al plotter.</div>
+    <button class="secondary" onclick="exportTableauPDF()">🖨 Stampa ordine tableau</button>
+    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Stampa solo l'elenco tavolo per tavolo, nomi nell'ordine scelto in "Ordine Tableau" — comodo da tenere sott'occhio mentre scrivi il cartellone.</div>
     <button class="secondary" onclick="exportLayout()">⬇ Esporta layout (JSON)</button>
     <button class="secondary" onclick="document.getElementById('importFile').click()">⬆ Importa layout (JSON)</button>
     <input type="file" id="importFile" accept="application/json" style="display:none" onchange="importLayout(event)">
@@ -597,6 +663,18 @@
 </div>
 
 <div id="printGuestList" class="print-only print-guest-section"></div>
+<div id="printTableauList" class="print-only print-tableau-section"></div>
+
+<div id="tableauModal" class="tableau-modal">
+  <div class="tableau-modal-inner">
+    <div class="tableau-modal-header">
+      <h2>Ordine Tableau</h2>
+      <button class="secondary" onclick="closeTableauModal()">✕ Chiudi</button>
+    </div>
+    <div class="hint">Usa le frecce ▲▼ per decidere l'ordine in cui i nomi vanno scritti sul tableau, tavolo per tavolo — è indipendente dal numero della sedia, che resta invariato per i segnaposto.</div>
+    <div id="tableauModalBody"></div>
+  </div>
+</div>
 
 <script>
 const SCALE = 26; // px per meter
@@ -723,6 +801,16 @@ let idSeq = 1;
 // Each entry: {id, label, menu:'pesce'|'carne'|'vegetariano'|'bimbo'|'soloposto'|'', note, count}
 let extraGuests = [];
 let extraGuestIdSeq = 1;
+// Every seat gets a stable, never-reassigned "sid" (assigned lazily in
+// ensureSeatsData for any seat missing one) so a table's custom tableau
+// writing-order can reference specific guests reliably, even though the
+// seat "number" itself gets recalculated whenever seats are added/removed.
+let seatIdSeq = 1;
+function recomputeSeatIdSeqFloor(){
+  let maxSid = 0;
+  tables.forEach(t=>(t.seatsData||[]).forEach(s=>{ if(s.sid && s.sid>maxSid) maxSid = s.sid; }));
+  seatIdSeq = Math.max(seatIdSeq||1, maxSid+1);
+}
 
 // ---------- undo history ----------
 // A simple snapshot-based undo: before any change, we save a copy of the
@@ -731,7 +819,7 @@ let undoStack = [];
 const UNDO_LIMIT = 40;
 let fieldEditSnapshotPending = false; // avoids one snapshot per keystroke while typing
 function snapshotForUndo(){
-  undoStack.push(JSON.stringify({ tables, idSeq, extraGuests, extraGuestIdSeq }));
+  undoStack.push(JSON.stringify({ tables, idSeq, extraGuests, extraGuestIdSeq, seatIdSeq }));
   if(undoStack.length > UNDO_LIMIT) undoStack.shift();
 }
 function undoLastChange(){
@@ -741,6 +829,8 @@ function undoLastChange(){
   idSeq = prev.idSeq;
   extraGuests = prev.extraGuests || [];
   extraGuestIdSeq = prev.extraGuestIdSeq || 1;
+  seatIdSeq = prev.seatIdSeq || 1;
+  recomputeSeatIdSeqFloor();
   selectedId = null;
   fieldEditSnapshotPending = false;
   render();
@@ -892,7 +982,7 @@ function ensureSeatsData(t){
     while(t.seatsData.length < t.seats) t.seatsData.push({name:'', note:'', child:false, menu:'', number: nextSeatNumber(t)});
     if(t.seatsData.length > t.seats) t.seatsData.length = t.seats;
   }
-  t.seatsData.forEach(s=>{ if(s.menu===undefined) s.menu=''; });
+  t.seatsData.forEach(s=>{ if(s.menu===undefined) s.menu=''; if(s.sid===undefined) s.sid = seatIdSeq++; });
   renumberSeats(t);
 }
 // Seat numbers are always DERIVED from each chair's current physical
@@ -2283,6 +2373,78 @@ function updateSidebar(){
   }
 }
 
+// ---------- ordine tableau (elenco nomi per tavolo, indipendente dal numero sedia) ----------
+// Ogni tavolo ha un proprio elenco "tableauOrder": i sid (id stabili) dei
+// suoi ospiti CON NOME, nell'ordine in cui vanno scritti sul cartellone.
+// Di default segue il numero di sedia, ma la persona può riordinarlo a
+// piacere (es. mettere "padre sposa" per ultimo) — l'ordine delle sedie
+// fisiche resta invariato, cambia solo l'ordine di scrittura sul tableau.
+// Si aggiorna da sola quando un nome viene aggiunto/tolto: chi perde il
+// nome esce dall'elenco, i nuovi nominati entrano in fondo (nell'ordine
+// del numero sedia) mantenendo intatto l'ordine già personalizzato degli
+// altri.
+function ensureTableauOrder(t){
+  if(!t.tableauOrder) t.tableauOrder = [];
+  const namedSeats = (t.seatsData||[]).filter(s=>s.name && s.name.trim());
+  const namedSidSet = new Set(namedSeats.map(s=>s.sid));
+  t.tableauOrder = t.tableauOrder.filter(sid=>namedSidSet.has(sid));
+  const present = new Set(t.tableauOrder);
+  const missing = namedSeats.filter(s=>!present.has(s.sid)).sort((a,b)=>(a.number||0)-(b.number||0));
+  missing.forEach(s=>t.tableauOrder.push(s.sid));
+}
+function moveTableauEntry(tableId, idx, delta){
+  const t = tables.find(tb=>tb.id===tableId);
+  if(!t) return;
+  ensureTableauOrder(t);
+  const newIdx = idx + delta;
+  if(newIdx<0 || newIdx>=t.tableauOrder.length) return;
+  snapshotForUndo();
+  const arr = t.tableauOrder;
+  [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+  renderTableauModal();
+  saveState();
+}
+function openTableauModal(){
+  renderTableauModal();
+  const modal = document.getElementById('tableauModal');
+  if(modal) modal.style.display = 'flex';
+}
+function closeTableauModal(){
+  const modal = document.getElementById('tableauModal');
+  if(modal) modal.style.display = 'none';
+}
+function renderTableauModal(){
+  const body = document.getElementById('tableauModalBody');
+  if(!body) return;
+  const ordered = tablesInPrintOrder();
+  if(!ordered.length){
+    body.innerHTML = '<div class="hint">Nessun tavolo aggiunto.</div>';
+    return;
+  }
+  body.innerHTML = ordered.map(t=>{
+    ensureTableauOrder(t);
+    const rows = t.tableauOrder.map((sid, idx)=>{
+      const s = t.seatsData.find(x=>x.sid===sid);
+      const name = s ? escapeAttr(s.name.trim()) : '';
+      return `<div class="tableau-row">
+        <span class="pos">${idx+1}.</span>
+        <span class="name">${name}</span>
+        <span class="tableau-row-actions">
+          <button type="button" title="Sposta su" onclick="moveTableauEntry(${t.id}, ${idx}, -1)" ${idx===0?'disabled':''}>▲</button>
+          <button type="button" title="Sposta giù" onclick="moveTableauEntry(${t.id}, ${idx}, 1)" ${idx===t.tableauOrder.length-1?'disabled':''}>▼</button>
+        </span>
+      </div>`;
+    }).join('');
+    const extraBits = [];
+    if(t.tableNote && t.tableNote.trim()) extraBits.push(escapeAttr(t.tableNote.trim()));
+    const extraDesc = extraBits.length ? ' — ' + extraBits.join(' · ') : '';
+    return `<div class="tableau-table-block">
+      <h3>Tavolo ${t.number}${extraDesc} <span class="tableau-count">(${t.tableauOrder.length} nomi)</span></h3>
+      ${rows || '<div class="hint">Nessun ospite con nome a questo tavolo.</div>'}
+    </div>`;
+  }).join('');
+}
+
 function toggleMergeSelect(id, checked){
   if(checked) mergeSelection.add(id); else mergeSelection.delete(id);
   updateSidebar();
@@ -2601,6 +2763,41 @@ function buildPrintMenuSummary(){
   el.innerHTML = html;
 }
 
+// Elenco stampabile, tavolo per tavolo, dei nomi nell'ordine di scrittura
+// scelto in "Ordine Tableau" (non l'ordine per numero di sedia).
+function buildPrintTableauList(){
+  const el = document.getElementById('printTableauList');
+  if(!el) return;
+  const ordered = tablesInPrintOrder();
+  if(!ordered.length){
+    el.innerHTML = '<h2>Ordine Tableau</h2><p class="print-empty">Nessun tavolo aggiunto.</p>';
+    return;
+  }
+  const blocks = ordered.map(t=>{
+    ensureTableauOrder(t);
+    const extraBits = [];
+    if(t.tableNote && t.tableNote.trim()) extraBits.push(escapeHtml(t.tableNote.trim()));
+    const extraDesc = extraBits.length ? ' — ' + extraBits.join(' · ') : '';
+    const names = t.tableauOrder.map(sid=>{
+      const s = t.seatsData.find(x=>x.sid===sid);
+      return s ? escapeHtml(s.name.trim()) : null;
+    }).filter(Boolean);
+    const list = names.length
+      ? '<ol>' + names.map(n=>`<li>${n}</li>`).join('') + '</ol>'
+      : '<p class="print-empty">Nessun ospite con nome a questo tavolo.</p>';
+    return `<div class="print-tableau-table"><h3>Tavolo ${t.number}${extraDesc}</h3>${list}</div>`;
+  }).join('');
+  el.innerHTML = `<h2>Ordine Tableau</h2>${blocks}`;
+}
+function exportTableauPDF(){
+  buildPrintTableauList();
+  document.body.classList.add('print-tableau-mode');
+  setTimeout(()=>{
+    window.print();
+    document.body.classList.remove('print-tableau-mode');
+  }, 50);
+}
+
 function runExportPDF(withNames){
   printNames = withNames;
   document.getElementById('printDate').textContent = 'Generato il ' + new Date().toLocaleString('it-IT');
@@ -2665,7 +2862,7 @@ const STORAGE_KEY = 'sala-tavoli-v1';
 function saveState(alsoWriteLinkedFile=true){
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      tables, idSeq, extraGuests, extraGuestIdSeq, spacing: document.getElementById('spacing').value
+      tables, idSeq, extraGuests, extraGuestIdSeq, seatIdSeq, spacing: document.getElementById('spacing').value
     }));
   }catch(err){ console.error('Storage error', err); }
   if(alsoWriteLinkedFile){
@@ -2684,6 +2881,8 @@ function loadState(){
       tables.forEach((t,i)=>{ if(!t.number) t.number = i+1; });
       extraGuests = data.extraGuests || [];
       extraGuestIdSeq = data.extraGuestIdSeq || (extraGuests.length ? Math.max(...extraGuests.map(e=>e.id))+1 : 1);
+      seatIdSeq = data.seatIdSeq || 1;
+      recomputeSeatIdSeqFloor();
       if(data.spacing){
         document.getElementById('spacing').value = data.spacing;
         document.getElementById('roundSpacingLabel').textContent = data.spacing;
@@ -2698,7 +2897,7 @@ function loadState(){
 }
 
 function exportLayout(){
-  const data = { tables, idSeq, extraGuests, extraGuestIdSeq, spacing: document.getElementById('spacing').value };
+  const data = { tables, idSeq, extraGuests, extraGuestIdSeq, seatIdSeq, spacing: document.getElementById('spacing').value };
   const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2721,6 +2920,8 @@ function importLayout(event){
       tables.forEach((t,i)=>{ if(!t.number) t.number = i+1; });
       extraGuests = data.extraGuests || [];
       extraGuestIdSeq = data.extraGuestIdSeq || (extraGuests.length ? Math.max(...extraGuests.map(e=>e.id))+1 : 1);
+      seatIdSeq = data.seatIdSeq || 1;
+      recomputeSeatIdSeqFloor();
       if(data.spacing){
         document.getElementById('spacing').value = data.spacing;
         document.getElementById('roundSpacingLabel').textContent = data.spacing;
@@ -2908,6 +3109,8 @@ async function loadFromLinkedFile(){
     tables.forEach((t,i)=>{ if(!t.number) t.number = i+1; });
     extraGuests = data.extraGuests || [];
     extraGuestIdSeq = data.extraGuestIdSeq || (extraGuests.length ? Math.max(...extraGuests.map(e=>e.id))+1 : 1);
+      seatIdSeq = data.seatIdSeq || 1;
+      recomputeSeatIdSeqFloor();
     if(data.spacing){
       document.getElementById('spacing').value = data.spacing;
       document.getElementById('roundSpacingLabel').textContent = data.spacing;
@@ -2928,7 +3131,7 @@ async function writeToLinkedFile(){
       const req = await linkedFileHandle.requestPermission({mode:'readwrite'});
       if(req!=='granted') return;
     }
-    const data = { tables, idSeq, extraGuests, extraGuestIdSeq, spacing: document.getElementById('spacing').value, updatedAt: Date.now() };
+    const data = { tables, idSeq, extraGuests, extraGuestIdSeq, seatIdSeq, spacing: document.getElementById('spacing').value, updatedAt: Date.now() };
     const writable = await linkedFileHandle.createWritable();
     await writable.write(JSON.stringify(data, null, 2));
     await writable.close();
@@ -3194,6 +3397,8 @@ async function loadFromGdrive(){
     tables.forEach((t,i)=>{ if(!t.number) t.number = i+1; });
     extraGuests = data.extraGuests || [];
     extraGuestIdSeq = data.extraGuestIdSeq || (extraGuests.length ? Math.max(...extraGuests.map(e=>e.id))+1 : 1);
+      seatIdSeq = data.seatIdSeq || 1;
+      recomputeSeatIdSeqFloor();
     if(data.spacing){
       document.getElementById('spacing').value = data.spacing;
       document.getElementById('roundSpacingLabel').textContent = data.spacing;
@@ -3209,7 +3414,7 @@ async function loadFromGdrive(){
 async function writeToGdrive(){
   if(!gdriveAccessToken || !gdriveFileId) return;
   try{
-    const data = { tables, idSeq, extraGuests, extraGuestIdSeq, spacing: document.getElementById('spacing').value, updatedAt: Date.now() };
+    const data = { tables, idSeq, extraGuests, extraGuestIdSeq, seatIdSeq, spacing: document.getElementById('spacing').value, updatedAt: Date.now() };
     const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveFileId}?uploadType=media`, {
       method: 'PATCH',
       headers: { 'Authorization': `Bearer ${gdriveAccessToken}`, 'Content-Type': 'application/json' },
