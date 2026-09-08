@@ -602,6 +602,19 @@
 const SCALE = 26; // px per meter
 const NS = "http://www.w3.org/2000/svg";
 const svg = document.getElementById('stage');
+const DEFAULT_VIEWBOX = svg.getAttribute('viewBox');
+// Computed by hand from the room's fixed geometry (polygon + dimension
+// labels + entrance/bagni labels), with padding — used only if a browser
+// doesn't support getBBox() for some reason, so print is still reasonably
+// tight instead of falling back to the roomy on-screen viewBox.
+const FALLBACK_PRINT_VIEWBOX = '-110 -80 580 750';
+// Everything ever drawn (room, labels, tables) lives inside this single
+// group, so we can reliably ask for its tight bounding box when fitting
+// the print view — calling getBBox() directly on the root <svg> element is
+// poorly/inconsistently supported across renderers, but it's well-defined
+// for a plain <g>.
+const contentGroup = document.createElementNS(NS,'g');
+svg.appendChild(contentGroup);
 
 // Room polygon in meters (x,y) - approximated from the sketch.
 // Origin (0,0) = top-left corner of the hall.
@@ -631,7 +644,7 @@ function drawStatic(){
   poly.setAttribute('fill', '#ffffff');
   poly.setAttribute('stroke', '#1a1a1a');
   poly.setAttribute('stroke-width', '2.5');
-  svg.appendChild(poly);
+  contentGroup.appendChild(poly);
 
   // dimension labels
   addLabel(7.7, -1.6, '15.45 m', 11, true);
@@ -645,7 +658,7 @@ function drawStatic(){
   circ.setAttribute('fill', '#fafafa');
   circ.setAttribute('stroke', '#1a1a1a');
   circ.setAttribute('stroke-width', '2');
-  svg.appendChild(circ);
+  contentGroup.appendChild(circ);
   addLabel(stage.cx, stage.cy - 0.3, 'PALCO FISSO', 10.5, true, false, true);
   addLabel(stage.cx, stage.cy + 0.55, 'Ø 6.5 m', 9.5, false, false, true);
 
@@ -657,7 +670,7 @@ function drawStatic(){
     r.setAttribute('x', px-s/2); r.setAttribute('y', py-s/2);
     r.setAttribute('width', s); r.setAttribute('height', s);
     r.setAttribute('fill', '#1a1a1a');
-    svg.appendChild(r);
+    contentGroup.appendChild(r);
   });
 
   // entrance
@@ -669,7 +682,7 @@ function drawStatic(){
   arrow.setAttribute('fill', 'none');
   arrow.setAttribute('stroke-linecap', 'round');
   arrow.setAttribute('stroke-linejoin', 'round');
-  svg.appendChild(arrow);
+  contentGroup.appendChild(arrow);
   addLabel(entranceX, 21.85 + 2.3, 'INGRESSO', 10.5, true);
 
   addLabel(-2.3, 17.1, 'BAGNI', 10, true);
@@ -686,7 +699,7 @@ function addLabel(xm, ym, text, size, bold, rotate90, muted){
   if(bold) t.setAttribute('font-weight','600');
   if(rotate90) t.setAttribute('transform', `rotate(-90 ${x} ${y})`);
   t.textContent = text;
-  svg.appendChild(t);
+  contentGroup.appendChild(t);
 }
 
 drawStatic();
@@ -1099,7 +1112,7 @@ function onSpacingChange(){
 }
 
 let tableLayer = document.createElementNS(NS,'g');
-svg.appendChild(tableLayer);
+contentGroup.appendChild(tableLayer);
 
 // Visual style for a seat dot based on assigned guest info
 function seatVisual(seat){
@@ -2593,12 +2606,35 @@ function runExportPDF(withNames){
   buildPrintMenuSummary();
   selectedId = null;
   render();
+  // The on-screen canvas has a fixed viewBox sized generously so there's
+  // always room to drag tables around — but that leaves a lot of blank
+  // margin baked into the picture, which made the printed floor plan look
+  // small even at "full page" width. Right before printing we tighten the
+  // viewBox to the actual bounding box of everything drawn (room, tables,
+  // labels), so the print fills the page with the real content — then
+  // restore the normal (roomier) viewBox afterward for on-screen editing.
+  let fitApplied = false;
+  try{
+    const bbox = contentGroup.getBBox();
+    if(bbox && bbox.width > 0 && bbox.height > 0){
+      const pad = 24;
+      svg.setAttribute('viewBox', `${bbox.x-pad} ${bbox.y-pad} ${bbox.width+2*pad} ${bbox.height+2*pad}`);
+      fitApplied = true;
+    }
+  }catch(err){
+    // getBBox unavailable in this browser: fall back to a viewBox computed
+    // from the room's known fixed geometry (still much tighter than the
+    // roomy default used on-screen to leave dragging space).
+    svg.setAttribute('viewBox', FALLBACK_PRINT_VIEWBOX);
+    fitApplied = true;
+  }
   // give the browser a moment to lay out the print-only content before printing
   setTimeout(()=>{
     window.print();
-    // reset back to the normal (numbers-only) view once the print dialog
-    // has been handed off, so the on-screen drawing never shows names.
+    // reset back to the normal (numbers-only, roomy-viewBox) view once the
+    // print dialog has been handed off, so on-screen editing is unaffected.
     printNames = false;
+    if(fitApplied) svg.setAttribute('viewBox', DEFAULT_VIEWBOX);
     render();
   }, 50);
 }
