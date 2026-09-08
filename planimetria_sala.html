@@ -342,7 +342,7 @@
     .canvas-wrap{padding:0; overflow:visible; background:none; justify-content:flex-start; display:block;}
     header p:not(.print-only){display:none;}
     header{border-bottom:2px solid #1a1a1a; margin-bottom:10px; padding:0 0 10px 0;}
-    svg{width:100%; height:auto; max-height:640px; display:block; margin:0 auto;}
+    svg{width:100%; height:auto; max-height:1450px; display:block; margin:0 auto;}
     .print-only{display:block;}
     .print-date{font-size:11px; color:#8a867c; margin-top:2px;}
     .print-menu-summary{
@@ -2459,10 +2459,13 @@ function buildPrintGuestList(){
 // che è già scritto nel campo "nota" di ciascuna sedia/persona (es.
 // "vegetariano", "no pesce", "menu bimbi", "-3 anni", "solo posto"...).
 // Se il campo nota è vuoto, la persona conta come menù pesce (il default
-// della maggior parte degli invitati). Il testo della nota viene comunque
-// mostrato per intero come sotto-voce (es. "CELIACO PESCE", "GRAVIDANZA
-// PESCE") esattamente come scritto, indipendentemente da come è stato
-// classificato.
+// della maggior parte degli invitati).
+//
+// La riga "di cui: ..." sotto ogni totale mostra SOLO le informazioni in
+// più oltre alla categoria stessa (es. "celiaco", "incinta", "con
+// seggiolino") — se la nota dice solo "carne" (o è vuota), quella persona
+// resta conteggiata nel totale senza generare una riga ripetitiva e
+// inutile come "di cui: n. 2 CARNE".
 const MENU_ORDER = ['pesce','carne','vegetariano','bimbo','soloposto'];
 const MENU_LABELS = {
   pesce: "MENU' PESCE",
@@ -2471,6 +2474,27 @@ const MENU_LABELS = {
   bimbo: 'MENU BIMBI',
   soloposto: 'SOLO POSTO'
 };
+// Frasi che segnalano la categoria stessa: vengono tolte dalla nota per
+// capire se resta scritto qualcos'altro di rilevante (celiaco, incinta,
+// allergie...). L'ordine non conta: si applicano tutte in sequenza.
+const CATEGORY_SIGNAL_PATTERNS = [
+  /\bsolo\s*posto\b/gi,
+  /\bneonat[oi]?\b/gi,
+  /non\s*mangia\s*pesce/gi,
+  /non\s*mangia\b/gi,
+  /-\s*\d+\s*ann[oi]?/gi,
+  /meno di\s*\d+\s*ann[oi]?/gi,
+  /\bbimb[oi]?\b/gi,
+  /\bbambin[oa]?\b/gi,
+  /vegetarian[oa]?/gi,
+  /vegan[oa]?/gi,
+  /no\s*pesce/gi,
+  /niente\s*pesce/gi,
+  /senza\s*pesce/gi,
+  /\bcarne\b/gi,
+  /\bpesce\b/gi,
+  /men[uù]/gi
+];
 function inferMenuFromNote(note){
   const n = (note||'').toLowerCase();
   if(!n.trim()) return 'pesce'; // niente scritto: di default menù pesce
@@ -2491,25 +2515,45 @@ function inferMenuFromNote(note){
   if(/\bpesce\b/.test(n)) return 'pesce';
   return 'pesce'; // fallback: qualsiasi altra nota (celiaco, allergie, gravidanza...) resta sul menù di default
 }
+// Toglie dalla nota le frasi che segnalano solo la categoria (e la parola
+// "seggiolino", gestita a parte tramite il flag dedicato) e restituisce
+// quello che resta — se non resta nulla, la nota non aggiunge informazioni
+// oltre al menù già dedotto e non genera una riga "di cui".
+function extractExtraNote(note){
+  let s = note || '';
+  CATEGORY_SIGNAL_PATTERNS.forEach(p=>{ s = s.replace(p, ' '); });
+  s = s.replace(/seggiolin[oi]?/gi, ' ');
+  s = s.replace(/[+,;/]/g, ' ').replace(/\s+/g, ' ').trim();
+  return s;
+}
+function noteHasSeggiolino(note){
+  return /seggiolin[oi]?/i.test(note||'');
+}
 function collectMenuSummary(){
   const groups = {};
   MENU_ORDER.forEach(k=>{ groups[k] = { total:0, notes:{} }; });
   let totalPeople = 0;
 
-  function addEntry(note, count){
+  function addEntry(note, count, child){
     if(!count || count<=0) return;
     totalPeople += count;
     const menu = inferMenuFromNote(note);
     groups[menu].total += count;
-    const n = (note||'').trim();
-    if(n) groups[menu].notes[n] = (groups[menu].notes[n]||0) + count;
+    const extra = extractExtraNote(note);
+    if(extra){
+      const key = extra.toUpperCase();
+      groups[menu].notes[key] = (groups[menu].notes[key]||0) + count;
+    }
+    if(child || noteHasSeggiolino(note)){
+      groups[menu].notes['CON SEGGIOLINO'] = (groups[menu].notes['CON SEGGIOLINO']||0) + count;
+    }
   }
 
   tables.forEach(t=>{
-    (t.seatsData||[]).forEach(s=>{ addEntry(s.note||'', 1); });
+    (t.seatsData||[]).forEach(s=>{ addEntry(s.note||'', 1, !!s.child); });
   });
   extraGuests.forEach(e=>{
-    addEntry(e.note||'', Math.max(1, parseInt(e.count)||1));
+    addEntry(e.note||'', Math.max(1, parseInt(e.count)||1), false);
   });
 
   return { groups, totalPeople };
