@@ -342,7 +342,7 @@
     .canvas-wrap{padding:0; overflow:visible; background:none; justify-content:flex-start; display:block;}
     header p:not(.print-only){display:none;}
     header{border-bottom:2px solid #1a1a1a; margin-bottom:10px; padding:0 0 10px 0;}
-    svg{width:100%; height:auto; max-height:78vh;}
+    svg{width:100%; height:auto; max-height:640px; display:block; margin:0 auto;}
     .print-only{display:block;}
     .print-date{font-size:11px; color:#8a867c; margin-top:2px;}
     .print-menu-summary{
@@ -1490,9 +1490,9 @@ function redrawCanvas(){
           const cyp = Math.sin(ang) * (r+7);
           drawSeatDot(g, cxp, cyp, t.seatsData[i], i, '#2f6f6a', t.id, t.id===selectedId && i===selectedSeatIdx, null, t.rotation, false);
         }
-        if(printNames) appendGuestListInsideTable(g, t, 2*r-14, 22);
-      } else {
-        if(printNames) appendGuestListInsideTable(g, t, 2*r-14, 22);
+        // Round tables are always free/unassigned seating in practice, so
+        // even in the "print with names" (A3/plotter) mode we only ever
+        // show the seat numbers here — never a guest-name list — as agreed.
       }
       if(isSel){
         // Circular tables resize symmetrically around their centre: any of
@@ -1546,9 +1546,9 @@ function redrawCanvas(){
           const cyp = Math.sin(ang) * ry;
           drawSeatDot(g, cxp, cyp, t.seatsData[i], i, '#6a4c93', t.id, t.id===selectedId && i===selectedSeatIdx, null, t.rotation, false);
         }
-        if(printNames) appendGuestListInsideTable(g, t, h-14, Math.max(14, Math.round(w/6)));
-      } else {
-        if(printNames) appendGuestListInsideTable(g, t, h-14, Math.max(14, Math.round(w/6)));
+        // Oval tables are always free/unassigned seating in practice, so
+        // even in the "print with names" (A3/plotter) mode we only ever
+        // show the seat numbers here — never a guest-name list — as agreed.
       }
       if(isSel){
         // Same drag-to-resize handles as the rectangular table: top/bottom
@@ -2543,7 +2543,8 @@ function runExportPDF(withNames){
   printNames = withNames;
   document.getElementById('printDate').textContent = 'Generato il ' + new Date().toLocaleString('it-IT');
   const totalSeats = tables.reduce((s,t)=>s+t.seats,0);
-  document.getElementById('printTotals').textContent = `${tables.length} tavoli · ${totalSeats} persone totali`;
+  const extraCount = extraGuests.reduce((s,e)=>s+Math.max(1, parseInt(e.count)||1), 0);
+  document.getElementById('printTotals').textContent = `${tables.length} tavoli · ${totalSeats + extraCount} persone totali`;
   buildPrintGuestList();
   buildPrintMenuSummary();
   selectedId = null;
