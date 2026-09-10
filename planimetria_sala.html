@@ -431,8 +431,12 @@
   .tableau-count{ color:var(--muted); font-weight:400; }
   .tableau-row{
     display:flex; align-items:center; gap:8px; padding:5px 4px;
-    border-bottom:1px solid #f0ede3; font-size:12.5px;
+    border-bottom:1px solid #f0ede3; font-size:12.5px; background:#fff;
   }
+  .tableau-row .drag-handle{ cursor:grab; color:var(--muted); flex-shrink:0; width:14px; text-align:center; }
+  .tableau-row.dragging{ opacity:0.4; }
+  .tableau-row.drag-over-top{ border-top:2px solid var(--ink); }
+  .tableau-row.drag-over-bottom{ border-bottom:2px solid var(--ink); }
   .tableau-row .pos{ width:24px; color:var(--muted); flex-shrink:0; text-align:right; }
   .tableau-row .name{ flex:1; }
   .tableau-row-actions{ display:flex; gap:3px; flex-shrink:0; }
@@ -619,6 +623,9 @@
       <div class="hint" id="gdriveOriginHint" style="display:none; color:var(--danger);">
         Il login con Google funziona solo se questa pagina è aperta da un indirizzo https:// reale (es. GitHub Pages), non da un file locale.
       </div>
+      <div class="hint" style="color:var(--danger);">
+        Importante: accedere con Google NON apre da solo il file. Ogni volta che apri questa pagina da un browser/PC nuovo, dopo l'accesso devi comunque premere "📂 Apri file da Drive" e scegliere ESATTAMENTE lo stesso file usato sugli altri PC — altrimenti la pagina resta vuota o crea un file diverso.
+      </div>
       <div id="gdriveStatusBox" class="selected-box" style="margin-bottom:8px;"></div>
       <div class="quickrow" id="gdriveSignedOutButtons">
         <button onclick="gdriveSignIn()">🔑 Accedi con Google</button>
@@ -627,7 +634,7 @@
         <button class="secondary" onclick="gdriveOpenPicker()">📂 Apri file da Drive</button>
         <button class="secondary" onclick="gdriveCreateFile()">＋ Crea file su Drive</button>
       </div>
-      <div class="hint" style="margin-top:6px;">Accedi con lo stesso account Google su ogni PC, poi apri (o la prima volta crea) lo stesso file: da quel momento resta sincronizzato tramite il tuo Google Drive vero, visibile anche su drive.google.com.</div>
+      <div class="hint" style="margin-top:6px;">Accedi con lo stesso account Google su ogni PC, poi apri (o la prima volta crea) lo stesso file: da quel momento resta sincronizzato tramite il tuo Google Drive vero, visibile anche su drive.google.com. "Crea file su Drive" va usato UNA SOLA VOLTA in assoluto (sul primo PC): su tutti gli altri PC usa sempre "Apri file da Drive" e scegli quello stesso file, mai "Crea" di nuovo.</div>
     </div>
 
     <div class="block" id="syncBlock">
@@ -644,7 +651,7 @@
     </div>
 
     <button class="secondary" onclick="openTableauModal()">📋 Ordine Tableau</button>
-    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Apri l'elenco di tutti i tavoli e tutti i nomi per decidere l'ordine di scrittura sul tableau (diverso dal numero di sedia).</div>
+    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Apri l'elenco di tutti i tavoli e tutti i nomi per decidere l'ordine di scrittura sul tableau (diverso dal numero di sedia). Trascina una riga con il pallino ⠿ per spostarla, oppure usa le frecce ▲▼.</div>
 
     <button class="secondary" onclick="exportPDF()">🖨 Stampa / Salva come PDF</button>
     <button class="secondary" onclick="exportPDFWithNames()">🖨 Stampa con nomi (per A3/plotter)</button>
@@ -671,7 +678,7 @@
       <h2>Ordine Tableau</h2>
       <button class="secondary" onclick="closeTableauModal()">✕ Chiudi</button>
     </div>
-    <div class="hint">Usa le frecce ▲▼ per decidere l'ordine in cui i nomi vanno scritti sul tableau, tavolo per tavolo — è indipendente dal numero della sedia, che resta invariato per i segnaposto.</div>
+    <div class="hint">Trascina una riga tenendo premuto sul pallino ⠿ per spostarla dove vuoi, oppure usa le frecce ▲▼. È indipendente dal numero della sedia, che resta invariato per i segnaposto. Ogni spostamento viene salvato subito.</div>
     <div id="tableauModalBody"></div>
   </div>
 </div>
@@ -804,13 +811,22 @@ let extraGuestIdSeq = 1;
 // Every seat gets a stable, never-reassigned "sid" (assigned lazily in
 // ensureSeatsData for any seat missing one) so a table's custom tableau
 // writing-order can reference specific guests reliably, even though the
-// seat "number" itself gets recalculated whenever seats are added/removed.
+// seat "number" itself gets recalculated whenever seats are added or removed.
 let seatIdSeq = 1;
 function recomputeSeatIdSeqFloor(){
   let maxSid = 0;
   tables.forEach(t=>(t.seatsData||[]).forEach(s=>{ if(s.sid && s.sid>maxSid) maxSid = s.sid; }));
   seatIdSeq = Math.max(seatIdSeq||1, maxSid+1);
 }
+
+// Timestamp of the most recent LOCAL change (any saveState() call). Used to
+// give local edits a short grace period during which the Drive/file sync
+// polling will not overwrite them with a remote copy — this avoids a
+// just-made reorder (or any other edit) disappearing because a periodic
+// sync check reloaded an older version of the file right after saving but
+// before that save had finished propagating to Drive/the shared file.
+let lastLocalChangeAt = 0;
+const SYNC_GRACE_MS = 8000;
 
 // ---------- undo history ----------
 // A simple snapshot-based undo: before any change, we save a copy of the
@@ -2404,6 +2420,55 @@ function moveTableauEntry(tableId, idx, delta){
   renderTableauModal();
   saveState();
 }
+// Drag-and-drop reordering: gets a chair started at fromIdx to land at
+// toIdx (an insertion point — same convention as splice: "insert before
+// this position"). Used by the pointer-drag handlers below so a whole row
+// can be picked up and dropped directly, instead of clicking arrows
+// repeatedly to walk it into place.
+function reorderTableauEntry(tableId, fromIdx, toIdx){
+  const t = tables.find(tb=>tb.id===tableId);
+  if(!t) return;
+  ensureTableauOrder(t);
+  if(toIdx > fromIdx) toIdx -= 1; // removing fromIdx first shifts later indices back by one
+  if(toIdx < 0 || toIdx >= t.tableauOrder.length || toIdx === fromIdx) return;
+  snapshotForUndo();
+  const [moved] = t.tableauOrder.splice(fromIdx, 1);
+  t.tableauOrder.splice(toIdx, 0, moved);
+  renderTableauModal();
+  saveState();
+}
+let tableauDragSrc = null;
+function tableauDragStart(e){
+  const row = e.currentTarget;
+  tableauDragSrc = { tableId: parseInt(row.dataset.tableId), idx: parseInt(row.dataset.idx) };
+  row.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+function tableauDragOver(e){
+  e.preventDefault();
+  const row = e.currentTarget;
+  row.classList.remove('drag-over-top','drag-over-bottom');
+  const rect = row.getBoundingClientRect();
+  const before = (e.clientY - rect.top) < rect.height/2;
+  row.classList.add(before ? 'drag-over-top' : 'drag-over-bottom');
+}
+function tableauDrop(e){
+  e.preventDefault();
+  const row = e.currentTarget;
+  const targetTableId = parseInt(row.dataset.tableId);
+  let targetIdx = parseInt(row.dataset.idx);
+  row.classList.remove('drag-over-top','drag-over-bottom');
+  if(!tableauDragSrc || tableauDragSrc.tableId !== targetTableId) return; // solo entro lo stesso tavolo
+  const rect = row.getBoundingClientRect();
+  const before = (e.clientY - rect.top) < rect.height/2;
+  if(!before) targetIdx += 1;
+  reorderTableauEntry(targetTableId, tableauDragSrc.idx, targetIdx);
+}
+function tableauDragEnd(e){
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.tableau-row').forEach(r=>r.classList.remove('drag-over-top','drag-over-bottom'));
+  tableauDragSrc = null;
+}
 function openTableauModal(){
   renderTableauModal();
   const modal = document.getElementById('tableauModal');
@@ -2426,7 +2491,10 @@ function renderTableauModal(){
     const rows = t.tableauOrder.map((sid, idx)=>{
       const s = t.seatsData.find(x=>x.sid===sid);
       const name = s ? escapeAttr(s.name.trim()) : '';
-      return `<div class="tableau-row">
+      return `<div class="tableau-row" draggable="true" data-table-id="${t.id}" data-idx="${idx}"
+        ondragstart="tableauDragStart(event)" ondragover="tableauDragOver(event)"
+        ondrop="tableauDrop(event)" ondragend="tableauDragEnd(event)">
+        <span class="drag-handle">⠿</span>
         <span class="pos">${idx+1}.</span>
         <span class="name">${name}</span>
         <span class="tableau-row-actions">
@@ -2860,6 +2928,7 @@ function resetAll(){
 const STORAGE_KEY = 'sala-tavoli-v1';
 
 function saveState(alsoWriteLinkedFile=true){
+  lastLocalChangeAt = Date.now();
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       tables, idSeq, extraGuests, extraGuestIdSeq, seatIdSeq, spacing: document.getElementById('spacing').value
@@ -3150,14 +3219,18 @@ function scheduleLinkedWrite(){
 
 // Ogni pochi secondi controlla se il file è cambiato (perché modificato da
 // un altro PC tramite Drive/Dropbox) e ricarica in quel caso. Evita di
-// interrompere la persona mentre sta scrivendo in un campo di testo.
+// interrompere la persona mentre sta scrivendo in un campo di testo, e —
+// grazie al controllo su lastLocalChangeAt — evita anche di sovrascrivere
+// una modifica fatta sul PC locale nei secondi appena precedenti (es. un
+// riordino del tableau) con una copia più vecchia che stava arrivando dal
+// file condiviso.
 function startSyncPolling(){
   stopSyncPolling();
   syncPollTimer = setInterval(async ()=>{
     if(!linkedFileHandle) return;
     try{
       const file = await linkedFileHandle.getFile();
-      if(file.lastModified > lastKnownMtime + 500){
+      if(file.lastModified > lastKnownMtime + 500 && Date.now() - lastLocalChangeAt > SYNC_GRACE_MS){
         const ae = document.activeElement;
         const isTyping = ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA');
         if(isTyping) return; // riprova al prossimo giro
@@ -3450,7 +3523,7 @@ function startGdrivePolling(){
       });
       if(!res.ok) return;
       const meta = await res.json();
-      if(gdriveLastKnownModified && meta.modifiedTime !== gdriveLastKnownModified){
+      if(gdriveLastKnownModified && meta.modifiedTime !== gdriveLastKnownModified && Date.now() - lastLocalChangeAt > SYNC_GRACE_MS){
         const ae = document.activeElement;
         const isTyping = ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA');
         if(isTyping) return; // riprova al prossimo giro
