@@ -399,12 +399,6 @@
     body.print-tableau-mode #printTotals,
     body.print-tableau-mode .canvas-wrap{ display:none !important; }
     .print-tableau-section{ display:none; }
-    /* Print "solo tavoli rettangolari": mostra solo l'elenco filtrato
-       (#printGuestList, ripopolato con i soli tavoli rettangolari), e
-       nasconde planimetria, riepilogo menù e totali come per il tableau. */
-    body.print-rectonly-mode #printMenuSummary,
-    body.print-rectonly-mode #printTotals,
-    body.print-rectonly-mode .canvas-wrap{ display:none !important; }
   }
   @media print{
     body.print-tableau-mode .print-tableau-section{ display:block !important; }
@@ -661,12 +655,11 @@
     <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Apri l'elenco di tutti i tavoli e tutti i nomi per decidere l'ordine di scrittura sul tableau (diverso dal numero di sedia). Trascina una riga con il pallino ⠿ per spostarla, oppure usa le frecce ▲▼.</div>
 
     <button class="secondary" onclick="exportPDF()">🖨 Stampa / Salva come PDF</button>
-    <button class="secondary" onclick="exportPDFWithNames()">🖨 Stampa con nomi (per A3/plotter)</button>
-    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">La prima stampa è quella di sempre (solo numeri sulle sedie). La seconda aggiunge il nome accanto a ogni sedia assegnata e l'elenco nomi sui tavoli a posti liberi: usala per una copia grande da stampare in A3 o al plotter. Nessuna delle due indica più le dimensioni fisiche dei tavoli.</div>
+    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Planimetria completa con tutti i tavoli e i numeri sulle sedie, più l'elenco di tutti i tavoli e ospiti.</div>
     <button class="secondary" onclick="exportPDFRectOnly()">🖨 Stampa solo tavoli rettangolari</button>
-    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Stampa un elenco a parte con solo i tavoli rettangolari e i loro ospiti (esclusi i tavoli rotondi e ovali).</div>
-    <button class="secondary" onclick="exportPDFRectOnlyWithNames()">🖨 Stampa rettangolari con planimetria e nomi</button>
-    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Come sopra, ma include anche la pagina della planimetria con solo i tavoli rettangolari disegnati, e al posto del numero mostra direttamente nome e cognome scritti sulla sedia giusta.</div>
+    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Planimetria completa come sopra (tutti i tavoli, numeri sulle sedie), ma nell'elenco sotto vengono riportati solo i tavoli rettangolari e i loro ospiti.</div>
+    <button class="secondary" onclick="exportPDFRectOnlyWithNames()">🖨 Stampa rettangolari con nomi</button>
+    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Come sopra (planimetria completa, elenco solo rettangolari), ma sulle sedie dei tavoli rettangolari, al posto del numero, viene scritto nome e cognome. I tavoli rotondi/ovali restano con i numeri come sempre.</div>
     <button class="secondary" onclick="exportTableauPDF()">🖨 Stampa ordine tableau</button>
     <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Stampa solo l'elenco tavolo per tavolo, nomi (con le relative note) nell'ordine scelto in "Ordine Tableau" — comodo da tenere sott'occhio mentre scrivi il cartellone.</div>
     <button class="secondary" onclick="exportLayout()">⬇ Esporta layout (JSON)</button>
@@ -2894,14 +2887,25 @@ function exportTableauPDF(){
   }, 50);
 }
 
-function runExportPDF(withNames){
+function runExportPDF(withNames, guestListFilter){
   printNames = withNames;
   document.getElementById('printDate').textContent = 'Generato il ' + new Date().toLocaleString('it-IT');
   const totalSeats = tables.reduce((s,t)=>s+t.seats,0);
   const extraCount = extraGuests.reduce((s,e)=>s+Math.max(1, parseInt(e.count)||1), 0);
   document.getElementById('printTotals').textContent = `${tables.length} tavoli · ${totalSeats + extraCount} persone totali`;
-  buildPrintGuestList();
-  buildPrintMenuSummary();
+  // La planimetria disegnata è sempre quella completa (tutti i tavoli,
+  // rotondi/ovali/rettangolari); solo l'elenco testuale sotto può essere
+  // filtrato a un sottoinsieme di tipi di tavolo (es. 'rect').
+  buildPrintGuestList(guestListFilter);
+  if(guestListFilter){
+    // Il riepilogo menù è calcolato su tutta la sala: non ha senso quando
+    // l'elenco sotto mostra solo un sottoinsieme di tavoli, quindi lo si
+    // svuota invece di mostrarlo.
+    const menuSummaryEl = document.getElementById('printMenuSummary');
+    if(menuSummaryEl) menuSummaryEl.innerHTML = '';
+  } else {
+    buildPrintMenuSummary();
+  }
   selectedId = null;
   render();
   // The on-screen canvas has a fixed viewBox sized generously so there's
@@ -2936,70 +2940,16 @@ function runExportPDF(withNames){
     render();
   }, 50);
 }
-function exportPDF(){ runExportPDF(false); }
-function exportPDFWithNames(){ runExportPDF(true); }
+function exportPDF(){ runExportPDF(false, null); }
 
-// Stampa un elenco a parte con SOLO i tavoli rettangolari (esclusi rotondi
-// e ovali). Non tocca la planimetria: nasconde canvas, riepilogo menù e
-// totali (vedi CSS .print-rectonly-mode) e mostra solo l'elenco filtrato.
-function exportPDFRectOnly(){
-  document.getElementById('printDate').textContent = 'Generato il ' + new Date().toLocaleString('it-IT');
-  const rectTables = tables.filter(t=>t.type==='rect');
-  const totalSeats = rectTables.reduce((s,t)=>s+t.seats,0);
-  document.getElementById('printTotals').textContent = `${rectTables.length} tavoli rettangolari · ${totalSeats} posti`;
-  buildPrintGuestList('rect');
-  document.body.classList.add('print-rectonly-mode');
-  setTimeout(()=>{
-    window.print();
-    document.body.classList.remove('print-rectonly-mode');
-  }, 50);
-}
+// Planimetria completa (tutti i tavoli, come la stampa normale) ma con
+// l'elenco testuale sotto limitato ai soli tavoli rettangolari.
+function exportPDFRectOnly(){ runExportPDF(false, 'rect'); }
 
-// Come exportPDFRectOnly, ma include anche la planimetria: disegna SOLO i
-// tavoli rettangolari (i tondi/ovali vengono temporaneamente tolti
-// dall'array "tables" solo per questo disegno, poi rimessi) e attiva
-// printNames così ogni sedia mostra nome e cognome al posto del numero,
-// nella posizione fisica corretta — esattamente come la stampa "con nomi
-// per A3/plotter", ma filtrata ai soli tavoli rettangolari.
-function exportPDFRectOnlyWithNames(){
-  const fullTables = tables;
-  const rectTables = fullTables.filter(t=>t.type==='rect');
-  tables = rectTables;
-  printNames = true;
-  document.getElementById('printDate').textContent = 'Generato il ' + new Date().toLocaleString('it-IT');
-  const totalSeats = rectTables.reduce((s,t)=>s+t.seats,0);
-  document.getElementById('printTotals').textContent = `${rectTables.length} tavoli rettangolari · ${totalSeats} posti`;
-  // Il riepilogo menù è calcolato su tutta la sala e non ha senso in questa
-  // stampa filtrata: lo svuotiamo invece di ricalcolarlo.
-  const menuSummaryEl = document.getElementById('printMenuSummary');
-  if(menuSummaryEl) menuSummaryEl.innerHTML = '';
-  buildPrintGuestList('rect');
-  selectedId = null;
-  render();
-  // Stessa logica di adattamento del viewBox usata dalle altre stampe: la
-  // planimetria include comunque sala/palco/pilastri fissi (sempre
-  // disegnati) più, questa volta, solo i tavoli rettangolari.
-  let fitApplied = false;
-  try{
-    const bbox = contentGroup.getBBox();
-    if(bbox && bbox.width > 0 && bbox.height > 0){
-      const pad = 24;
-      svg.setAttribute('viewBox', `${bbox.x-pad} ${bbox.y-pad} ${bbox.width+2*pad} ${bbox.height+2*pad}`);
-      fitApplied = true;
-    }
-  }catch(err){
-    svg.setAttribute('viewBox', FALLBACK_PRINT_VIEWBOX);
-    fitApplied = true;
-  }
-  setTimeout(()=>{
-    window.print();
-    // ripristina tutto: tavoli completi, niente nomi sul disegno, viewBox normale
-    printNames = false;
-    tables = fullTables;
-    if(fitApplied) svg.setAttribute('viewBox', DEFAULT_VIEWBOX);
-    render();
-  }, 50);
-}
+// Come sopra, ma con i nomi al posto dei numeri sulle sedie dei tavoli
+// rettangolari (i tavoli rotondi/ovali restano con i numeri come sempre,
+// perché drawSeatDot() li disegna sempre con showName=false).
+function exportPDFRectOnlyWithNames(){ runExportPDF(true, 'rect'); }
 
 function resetAll(){
   if((tables.length || extraGuests.length) && !confirm('Vuoi svuotare tutta la sala (tavoli e persone extra)? Potrai annullare con "Annulla ultima modifica" subito dopo, se cambi idea.')) return;
