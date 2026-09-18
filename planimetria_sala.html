@@ -1248,11 +1248,13 @@ function seatTooltip(seat, idx){
   if(seat.child) parts.push('Seggiolino');
   return parts.join(' — ');
 }
-// Shortens a guest name so it fits next to a chair on the drawing: first
-// name only, hard-truncated with an ellipsis if that's still too long.
+// Full name and surname next to the chair on the drawing, hard-truncated
+// with an ellipsis only if unusually long (this print replaces the seat
+// number entirely with the name, so the full name is wanted, not just a
+// first name).
 function shortNameForPlan(name){
-  const first = (name||'').trim().split(/\s+/)[0] || '';
-  return first.length > 11 ? first.slice(0,10)+'…' : first;
+  const full = (name||'').trim().replace(/\s+/g,' ');
+  return full.length > 24 ? full.slice(0,23)+'…' : full;
 }
 function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSeat, noteDir, tableRotation, showName){
   const vis = seatVisual(seat);
@@ -1277,21 +1279,22 @@ function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSea
   dot.appendChild(title);
   dot.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopPropagation(); focusSeat(tableId, idx); });
   g.appendChild(dot);
-  const numTxt = document.createElementNS(NS,'text');
-  numTxt.setAttribute('x', cx); numTxt.setAttribute('y', cy+2.2);
-  numTxt.setAttribute('text-anchor','middle');
-  numTxt.setAttribute('font-size', 5.5);
-  numTxt.setAttribute('font-weight', '700');
-  numTxt.setAttribute('fill', vis.stroke || defaultStroke);
-  numTxt.setAttribute('pointer-events', 'none');
-  numTxt.textContent = (seat && seat.number) || (idx+1);
-  g.appendChild(numTxt);
-  if(printNames && showName && seat && seat.name && seat.name.trim()){
-    // Rectangular tables only: the name sits just outside the chair, offset
-    // along the side the chair is actually on (left/right/top/bottom) —
-    // NOT the direction from the table's centre, which on a long table
-    // points almost lengthwise for chairs far from the middle and would
-    // land the name on top of a neighbouring seat's number.
+  const willShowName = printNames && showName && seat && seat.name && seat.name.trim();
+  if(!willShowName){
+    const numTxt = document.createElementNS(NS,'text');
+    numTxt.setAttribute('x', cx); numTxt.setAttribute('y', cy+2.2);
+    numTxt.setAttribute('text-anchor','middle');
+    numTxt.setAttribute('font-size', 5.5);
+    numTxt.setAttribute('font-weight', '700');
+    numTxt.setAttribute('fill', vis.stroke || defaultStroke);
+    numTxt.setAttribute('pointer-events', 'none');
+    numTxt.textContent = (seat && seat.number) || (idx+1);
+    g.appendChild(numTxt);
+  }
+  if(willShowName){
+    // The number is dropped entirely in favour of the full name, so the
+    // label can sit right at the chair instead of needing to dodge a
+    // number badge.
     const ux = noteDir ? noteDir.dx : (Math.hypot(cx,cy) ? cx/Math.hypot(cx,cy) : 0);
     const uy = noteDir ? noteDir.dy : (Math.hypot(cx,cy) ? cy/Math.hypot(cx,cy) : 0);
     const nx = cx + ux*9, ny = cy + uy*9;
@@ -1620,9 +1623,9 @@ function redrawCanvas(){
           const cyp = Math.sin(ang) * (r+7);
           drawSeatDot(g, cxp, cyp, t.seatsData[i], i, '#2f6f6a', t.id, t.id===selectedId && i===selectedSeatIdx, null, t.rotation, false);
         }
-        // Round tables are always free/unassigned seating in practice, so
-        // even in the "print with names" (A3/plotter) mode we only ever
-        // show the seat numbers here — never a guest-name list — as agreed.
+        // Round tables always print simply — table number, seat count and
+        // plain seat numbers on the chairs — even in "print with names"
+        // mode. Only rectangular tables get names in place of numbers.
       }
       if(isSel){
         // Circular tables resize symmetrically around their centre: any of
