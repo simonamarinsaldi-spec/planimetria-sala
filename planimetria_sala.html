@@ -1285,16 +1285,22 @@ function drawSeatDot(g, cx, cy, seat, idx, defaultStroke, tableId, isSelectedSea
     g.appendChild(numTxt);
   }
   if(willShowName){
-    // The number is dropped entirely in favour of the full name, so the
-    // label can sit right at the chair instead of needing to dodge a
-    // number badge.
+    // The number is dropped entirely in favour of the full name. The label
+    // is anchored (start/end, not middle) so its FULL length falls beyond
+    // the chair and the table's edge — a middle-anchored long name would
+    // fold half its width back over the table/dot, which is why names were
+    // hard to read before. Distance from the dot is also increased.
     const ux = noteDir ? noteDir.dx : (Math.hypot(cx,cy) ? cx/Math.hypot(cx,cy) : 0);
     const uy = noteDir ? noteDir.dy : (Math.hypot(cx,cy) ? cy/Math.hypot(cx,cy) : 0);
-    const nx = cx + ux*9, ny = cy + uy*9;
+    const gap = 8; // clearance from the seat dot's edge to the start of the text
+    const nx = cx + ux*(5+gap), ny = cy + uy*(5+gap);
+    let anchor = 'middle';
+    if(ux > 0.5) anchor = 'start';       // seat on the right side: text grows further right
+    else if(ux < -0.5) anchor = 'end';   // seat on the left side: text grows further left
     const nameTxt = document.createElementNS(NS,'text');
     nameTxt.setAttribute('x', nx); nameTxt.setAttribute('y', ny+2.2);
-    nameTxt.setAttribute('text-anchor','middle');
-    nameTxt.setAttribute('font-size', 6);
+    nameTxt.setAttribute('text-anchor', anchor);
+    nameTxt.setAttribute('font-size', 6.5);
     nameTxt.setAttribute('font-weight', '600');
     nameTxt.setAttribute('fill', vis.stroke || defaultStroke);
     nameTxt.setAttribute('pointer-events', 'none');
