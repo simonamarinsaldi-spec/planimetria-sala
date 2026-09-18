@@ -398,6 +398,12 @@
     body.print-tableau-mode #printTotals,
     body.print-tableau-mode .canvas-wrap{ display:none !important; }
     .print-tableau-section{ display:none; }
+    /* Print "solo tavoli rettangolari": mostra solo l'elenco filtrato
+       (#printGuestList, ripopolato con i soli tavoli rettangolari), e
+       nasconde planimetria, riepilogo menù e totali come per il tableau. */
+    body.print-rectonly-mode #printMenuSummary,
+    body.print-rectonly-mode #printTotals,
+    body.print-rectonly-mode .canvas-wrap{ display:none !important; }
   }
   @media print{
     body.print-tableau-mode .print-tableau-section{ display:block !important; }
@@ -655,9 +661,11 @@
 
     <button class="secondary" onclick="exportPDF()">🖨 Stampa / Salva come PDF</button>
     <button class="secondary" onclick="exportPDFWithNames()">🖨 Stampa con nomi (per A3/plotter)</button>
-    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">La prima stampa è quella di sempre (solo numeri sulle sedie). La seconda aggiunge il nome accanto a ogni sedia assegnata e l'elenco nomi sui tavoli a posti liberi: usala per una copia grande da stampare in A3 o al plotter.</div>
+    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">La prima stampa è quella di sempre (solo numeri sulle sedie). La seconda aggiunge il nome accanto a ogni sedia assegnata e l'elenco nomi sui tavoli a posti liberi: usala per una copia grande da stampare in A3 o al plotter. Nessuna delle due indica più le dimensioni fisiche dei tavoli.</div>
+    <button class="secondary" onclick="exportPDFRectOnly()">🖨 Stampa solo tavoli rettangolari</button>
+    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Stampa un elenco a parte con solo i tavoli rettangolari e i loro ospiti (esclusi i tavoli rotondi e ovali).</div>
     <button class="secondary" onclick="exportTableauPDF()">🖨 Stampa ordine tableau</button>
-    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Stampa solo l'elenco tavolo per tavolo, nomi nell'ordine scelto in "Ordine Tableau" — comodo da tenere sott'occhio mentre scrivi il cartellone.</div>
+    <div class="hint" style="margin-top:-4px; margin-bottom:8px;">Stampa solo l'elenco tavolo per tavolo, nomi (con le relative note) nell'ordine scelto in "Ordine Tableau" — comodo da tenere sott'occhio mentre scrivi il cartellone.</div>
     <button class="secondary" onclick="exportLayout()">⬇ Esporta layout (JSON)</button>
     <button class="secondary" onclick="document.getElementById('importFile').click()">⬆ Importa layout (JSON)</button>
     <input type="file" id="importFile" accept="application/json" style="display:none" onchange="importLayout(event)">
@@ -2656,23 +2664,31 @@ function tablesInPrintOrder(){
   return [...tables].sort((a,b)=>(a.number||0)-(b.number||0));
 }
 
-function buildPrintGuestList(){
+// filterType: se omesso, elenca tutti i tavoli; se 'rect' (o 'round'/'oval'),
+// elenca solo i tavoli di quel tipo — usato dalla stampa "solo tavoli
+// rettangolari". Le dimensioni fisiche del tavolo (cm) non vengono più
+// stampate in nessuna delle due modalità: si mostra solo la forma e il
+// numero di posti.
+function buildPrintGuestList(filterType){
   const container = document.getElementById('printGuestList');
-  const totalSeats = tables.reduce((s,t)=>s+t.seats,0);
-  const totalNamed = tables.reduce((s,t)=>s+(t.seatsData||[]).filter(seat=>seat.name && seat.name.trim()).length,0);
-  const summary = `<p class="print-summary">Tavoli: <b>${tables.length}</b> &nbsp;·&nbsp; Posti totali: <b>${totalSeats}</b> &nbsp;·&nbsp; Persone con nome assegnato: <b>${totalNamed}</b></p>`;
-  if(tables.length===0){
-    container.innerHTML = '<h2>Elenco tavoli e ospiti</h2><p class="print-empty">Nessun tavolo aggiunto.</p>';
+  const allOrdered = tablesInPrintOrder();
+  const orderedTables = filterType ? allOrdered.filter(t=>t.type===filterType) : allOrdered;
+  const totalSeats = orderedTables.reduce((s,t)=>s+t.seats,0);
+  const totalNamed = orderedTables.reduce((s,t)=>s+(t.seatsData||[]).filter(seat=>seat.name && seat.name.trim()).length,0);
+  const heading = filterType==='rect' ? 'Elenco tavoli rettangolari e ospiti' : 'Elenco tavoli e ospiti';
+  const summary = `<p class="print-summary">Tavoli: <b>${orderedTables.length}</b> &nbsp;·&nbsp; Posti totali: <b>${totalSeats}</b> &nbsp;·&nbsp; Persone con nome assegnato: <b>${totalNamed}</b></p>`;
+  if(orderedTables.length===0){
+    const emptyMsg = filterType==='rect' ? 'Nessun tavolo rettangolare aggiunto.' : 'Nessun tavolo aggiunto.';
+    container.innerHTML = `<h2>${heading}</h2><p class="print-empty">${emptyMsg}</p>`;
     return;
   }
-  const orderedTables = tablesInPrintOrder();
   const blocks = orderedTables.map((t,i)=>{
     const num = t.number || (i+1);
     const typeDesc = t.type==='round'
-      ? `Tavolo rotondo · Ø ${(t.diaM*100).toFixed(0)} cm · ${t.seats} posti`
+      ? `Tavolo rotondo · ${t.seats} posti`
       : t.type==='oval'
-        ? `Tavolo ovale · ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)} cm · ${t.seats} posti`
-        : `Tavolo rettangolare · ${(t.lenM*100).toFixed(0)}×${(t.widM*100).toFixed(0)} cm · ${t.seats} posti`;
+        ? `Tavolo ovale · ${t.seats} posti`
+        : `Tavolo rettangolare · ${t.seats} posti`;
     const extraBits = [];
     if(t.tableNote && t.tableNote.trim()) extraBits.push(escapeHtml(t.tableNote.trim()));
     extraBits.push(t.seatsAssigned ? 'posti assegnati' : 'posti liberi');
@@ -2693,7 +2709,7 @@ function buildPrintGuestList(){
         </table>
       </div>`;
   }).join('');
-  container.innerHTML = `<h2>Elenco tavoli e ospiti</h2>${summary}${blocks}`;
+  container.innerHTML = `<h2>${heading}</h2>${summary}${blocks}`;
 }
 
 // Raccoglie, su tutti i tavoli + le persone extra, il totale generale e il
@@ -2832,7 +2848,9 @@ function buildPrintMenuSummary(){
 }
 
 // Elenco stampabile, tavolo per tavolo, dei nomi nell'ordine di scrittura
-// scelto in "Ordine Tableau" (non l'ordine per numero di sedia).
+// scelto in "Ordine Tableau" (non l'ordine per numero di sedia). Ogni nome
+// include anche la sua nota (allergie, seggiolino, ecc.), così l'elenco
+// tableau riporta le stesse informazioni della stampa normale.
 function buildPrintTableauList(){
   const el = document.getElementById('printTableauList');
   if(!el) return;
@@ -2846,12 +2864,16 @@ function buildPrintTableauList(){
     const extraBits = [];
     if(t.tableNote && t.tableNote.trim()) extraBits.push(escapeHtml(t.tableNote.trim()));
     const extraDesc = extraBits.length ? ' — ' + extraBits.join(' · ') : '';
-    const names = t.tableauOrder.map(sid=>{
+    const entries = t.tableauOrder.map(sid=>{
       const s = t.seatsData.find(x=>x.sid===sid);
-      return s ? escapeHtml(s.name.trim()) : null;
+      if(!s) return null;
+      const name = escapeHtml(s.name.trim());
+      let note = s.note && s.note.trim() ? escapeHtml(s.note.trim()) : '';
+      if(s.child) note = note ? note + ' · Seggiolino' : 'Seggiolino';
+      return note ? `${name} — ${note}` : name;
     }).filter(Boolean);
-    const list = names.length
-      ? '<ol>' + names.map(n=>`<li>${n}</li>`).join('') + '</ol>'
+    const list = entries.length
+      ? '<ol>' + entries.map(n=>`<li>${n}</li>`).join('') + '</ol>'
       : '<p class="print-empty">Nessun ospite con nome a questo tavolo.</p>';
     return `<div class="print-tableau-table"><h3>Tavolo ${t.number}${extraDesc}</h3>${list}</div>`;
   }).join('');
@@ -2910,6 +2932,22 @@ function runExportPDF(withNames){
 }
 function exportPDF(){ runExportPDF(false); }
 function exportPDFWithNames(){ runExportPDF(true); }
+
+// Stampa un elenco a parte con SOLO i tavoli rettangolari (esclusi rotondi
+// e ovali). Non tocca la planimetria: nasconde canvas, riepilogo menù e
+// totali (vedi CSS .print-rectonly-mode) e mostra solo l'elenco filtrato.
+function exportPDFRectOnly(){
+  document.getElementById('printDate').textContent = 'Generato il ' + new Date().toLocaleString('it-IT');
+  const rectTables = tables.filter(t=>t.type==='rect');
+  const totalSeats = rectTables.reduce((s,t)=>s+t.seats,0);
+  document.getElementById('printTotals').textContent = `${rectTables.length} tavoli rettangolari · ${totalSeats} posti`;
+  buildPrintGuestList('rect');
+  document.body.classList.add('print-rectonly-mode');
+  setTimeout(()=>{
+    window.print();
+    document.body.classList.remove('print-rectonly-mode');
+  }, 50);
+}
 
 function resetAll(){
   if((tables.length || extraGuests.length) && !confirm('Vuoi svuotare tutta la sala (tavoli e persone extra)? Potrai annullare con "Annulla ultima modifica" subito dopo, se cambi idea.')) return;
