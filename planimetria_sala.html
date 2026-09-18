@@ -2700,16 +2700,24 @@ function buildPrintGuestList(filterType){
     const extraDesc = ` · ${extraBits.join(' · ')}`;
     const rows = [...t.seatsData].sort((a,b)=>(a.number||0)-(b.number||0)).map((s,pos)=>{
       const name = s.name && s.name.trim() ? escapeHtml(s.name.trim()) : '—';
+      const rowLabel = t.seatsAssigned ? s.number : (pos+1);
+      if(filterType){
+        // Le stampe filtrate ai tavoli rettangolari (con o senza nomi
+        // scritti sulla planimetria) non riportano la colonna delle note.
+        return `<tr><td>${rowLabel}</td><td>${name}</td></tr>`;
+      }
       let note = s.note && s.note.trim() ? escapeHtml(s.note.trim()) : '';
       if(s.child) note = note ? note + ' · Seggiolino' : 'Seggiolino';
-      const rowLabel = t.seatsAssigned ? s.number : (pos+1);
       return `<tr><td>${rowLabel}</td><td>${name}</td><td>${note || '—'}</td></tr>`;
     }).join('');
+    const headerCells = filterType
+      ? `<th>${t.seatsAssigned ? 'Sedia' : '#'}</th><th>Nome ospite</th>`
+      : `<th>${t.seatsAssigned ? 'Sedia' : '#'}</th><th>Nome ospite</th><th>Note (allergie, seggiolino, ecc.)</th>`;
     return `
       <div class="print-table-block">
         <h3>Tavolo ${num} — ${typeDesc}${extraDesc}</h3>
         <table class="print-seat-table">
-          <thead><tr><th>${t.seatsAssigned ? 'Sedia' : '#'}</th><th>Nome ospite</th><th>Note (allergie, seggiolino, ecc.)</th></tr></thead>
+          <thead><tr>${headerCells}</tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
